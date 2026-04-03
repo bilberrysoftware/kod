@@ -39,3 +39,6 @@ go.work.sum
 # mkdocs
 /docs/.venv
 /docs/site
+
+# GoLand
+/.idea
