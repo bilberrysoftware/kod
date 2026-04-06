@@ -98,16 +98,35 @@ and all of its constituent container images.`,
 			fmt.Println(valuesPath, "could not be parsed", err)
 			os.Exit(1)
 		}
+
+		// Create hints file for all that we learn about the container images used by this chart
+		hints := types.HintsFile{
+			ChartRef: types.HelmChartReference{
+				Name:    chartDef.Name,
+				Version: chartDef.Version,
+			},
+			Hints: []types.ContainerImageHint{},
+		}
+
 		// Now look for various common image config locations
-		vImageEl := valuesMap["image"]
+		vImageEl := valuesMap["image"] // TODO change this to be more dynamic in future versions
 		if vImageEl != nil {
 			vImage := vImageEl.(map[string]interface{})
+			hint := types.ContainerImageHint{
+				ParentPath: "image", // TODO change this to be more dynamic in future versions
+				//RegistryPath:   vImageRegistryStr,
+				//TagPath:        vImageTagStr,
+				//DigestPath:     vImageDigestStr,
+				//PackagedImage:  ctrObj,
+			}
 			// check for 'registry' first
 			vImageRegistry := vImage["registry"]
 			vImageRepository := vImage["repository"].(string)
 			vImageRegistryStr := ""
 			// TODO trim strings of whitespace
 			if vImageRepository != "" {
+				hint.RepositoryPath = "repository" // TODO change this to be more dynamic in future versions
+
 				vImageDigest := vImage["digest"]
 				vImageDigestStr := ""
 				if vImageDigest == nil {
@@ -116,9 +135,11 @@ and all of its constituent container images.`,
 					if idx != -1 {
 						vImageRepository = vImageRepository[:idx]
 						vImageDigestStr = vImageRepository[idx+1:]
+						hint.DigestPath = "repository.@"
 					}
 				} else {
 					vImageDigestStr = vImageDigest.(string)
+					hint.DigestPath = "digest"
 				}
 				if vImageRegistry == nil {
 					// Get Registry from the first part of repository if it looks like a URL, OR default to docker.io
@@ -126,9 +147,11 @@ and all of its constituent container images.`,
 					if idx != -1 {
 						vImageRegistryStr = vImageRepository[:idx]
 						vImageRepository = vImageRepository[idx+1:]
+						hint.RegistryPath = "repository./"
 					}
 				} else {
 					vImageRegistryStr = vImageRegistry.(string)
+					hint.RegistryPath = "registry"
 				}
 				vImageTag := vImage["tag"]
 				vImageTagStr := ""
@@ -138,9 +161,11 @@ and all of its constituent container images.`,
 					if idx != -1 {
 						vImageTagStr = vImageRepository[:idx]
 						vImageRepository = vImageRepository[idx+1:]
+						hint.TagPath = "repository.:"
 					}
 				} else {
 					vImageTagStr = vImageTag.(string)
+					hint.TagPath = "tag"
 				}
 				// Last catch all for tag
 				if vImageTagStr == "" {
@@ -151,13 +176,17 @@ and all of its constituent container images.`,
 					// TODO Consider specifying a target version of "sha256-SHAVALUE" when this happens, to avoid CIS Benchmark issues on deployment
 				}
 				fmt.Println(fmt.Sprintf("- Found container image: '%s/%s:%s@%s'", vImageRegistryStr, vImageRepository, vImageTagStr, vImageDigestStr))
-				containers = append(containers, types.ContainerImage{
+				ctrObj := types.ContainerImage{
 					Registry:   vImageRegistryStr,
 					Repository: vImageRepository,
 					Tag:        vImageTagStr,
 					Digest:     vImageDigestStr,
-				})
-				// TODO Save the value mappings of this information so we can override the correct parameters on deployment of the package
+				}
+				containers = append(containers, ctrObj)
+				// Save the value mappings of this information so we can override the correct parameters on deployment of the package
+
+				hint.PackagedImage = ctrObj
+				hints.Hints = append(hints.Hints, hint)
 			}
 		}
 
@@ -191,6 +220,19 @@ and all of its constituent container images.`,
 			err = os.CopyFS(chartCopyPath, os.DirFS(chartPath))
 			if err != nil {
 				fmt.Println("Error copying chart to temporary folder from:", chartPath, "to:", chartCopyPath, ",", err)
+				os.Exit(1)
+			}
+			// Copy hints file over
+			fmt.Println(" - Writing hints file for chart")
+			hintsFileName := filepath.Join(tempPath, "charts", chartAndVersion+"-hints.yaml")
+			hintsBytes, err := yaml.Marshal(hints)
+			if err != nil {
+				fmt.Println("Error marshaling hints file", err)
+				os.Exit(1)
+			}
+			err = os.WriteFile(hintsFileName, hintsBytes, os.ModePerm)
+			if err != nil {
+				fmt.Println("Error writing hints file", err)
 				os.Exit(1)
 			}
 		}

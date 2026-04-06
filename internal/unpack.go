@@ -83,6 +83,7 @@ func DoUnpack(ctx context.Context, packagePath string, deleteIfExists bool) (str
 		fmt.Println("Error opening kodpkg archive file:", err)
 		os.Exit(1)
 	}
+	defer fh.Close()
 	outAbs, err := filepath.Abs(tmpDir)
 	if err != nil {
 		fmt.Println(fmt.Errorf("calling filepath.Abs on output dir '%s' failed: %w", tmpDir, err))

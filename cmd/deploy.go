@@ -6,14 +6,15 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"kod/internal"
+	"kod/types"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var skipInstall = false
@@ -50,6 +51,31 @@ Then perform a helm upgrade --install on the package.`,
 			os.Exit(1)
 		}
 
+		fmt.Println("Reading kod-package.yaml")
+		kodPackage := types.Package{}
+		packageBytes, err := os.ReadFile(filepath.Join(tmpFolder, "kod-package.yaml"))
+		if err != nil {
+			fmt.Println("Error reading kod-package.yaml", err)
+			os.Exit(1)
+		}
+		err = yaml.Unmarshal(packageBytes, &kodPackage)
+		if err != nil {
+			fmt.Println("Error parsing kod-package.yaml", err)
+		}
+
+		// load hints file
+		hints := types.HintsFile{}
+		hintsBytes, err := os.ReadFile(filepath.Join(tmpFolder, "charts", kodPackage.Name+"-"+kodPackage.Version+"-hints.yaml"))
+		if err != nil {
+			fmt.Println("Error reading hints file", err)
+			os.Exit(1)
+		}
+		err = yaml.Unmarshal(hintsBytes, &hints)
+		if err != nil {
+			fmt.Println("Error parsing hints file", err)
+			os.Exit(1)
+		}
+
 		// upload containers to target registry
 		fmt.Println("Loading container images into local registry...")
 		ctrFolder := filepath.Join(tmpFolder, "containers")
@@ -69,72 +95,167 @@ Then perform a helm upgrade --install on the package.`,
 		//	os.Exit(1)
 		//}
 		fmt.Println("Reading containers within folder", ctrFolder)
-		err = filepath.WalkDir(ctrFolder, func(path string, d fs.DirEntry, err error) error {
+		// Instead of walking the container folder, read the data from the kod package file
+		for _, ctr := range kodPackage.Containers {
+
+			//err = filepath.WalkDir(ctrFolder, func(path string, d fs.DirEntry, err error) error {
 			//fmt.Println("Walking:", path, "Dir?", d.IsDir(), "name:", d.Name())
+			//if err != nil {
+			//	return err
+			//}
+			//if strings.HasPrefix(d.Name(), ".") {
+			//	return fs.SkipDir
+			//}
+			//if !d.IsDir() {
+			paths := []string{tmpFolder}
+			paths = append(paths, "containers")
+			for _, s := range strings.Split(ctr.Registry, "/") {
+				paths = append(paths, s)
+			}
+			for _, s := range strings.Split(ctr.Repository, "/") {
+				paths = append(paths, s)
+			}
+			ctrFolder = filepath.Join(paths...)
+			//// Execute skopeo command
+			//rel, err := filepath.Rel(ctrFolder, path)
+			//if err != nil {
+			//	fmt.Println("Error finding relative path", path, err)
+			//	os.Exit(1)
+			//}
+			//fmt.Println(" - Found container archive", rel)
+			//
+			//parent := filepath.Dir(rel)
+			//archiveName := d.Name()
+			//archiveName :=
+			//ctrVersion := archiveName
+			//idx := strings.LastIndex(archiveName, ".")
+			//if idx != -1 {
+			//	ctrVersion = archiveName[:idx]
+			//}
+
+			fmt.Println("   - Processing container with repository", ctr.Repository, "and tag", ctr.Tag)
+
+			// Create command and output to the terminal
+			regPath := registryUrl
+			if strings.HasPrefix(regPath, "http://") {
+				regPath = regPath[7:]
+			}
+			if strings.HasPrefix(regPath, "https://") {
+				regPath = regPath[8:]
+			}
+			if strings.HasPrefix(regPath, "oci://") {
+				regPath = regPath[6:]
+			}
+			if !strings.HasSuffix(regPath, "/") {
+				regPath += "/"
+			}
+			repoPath := ""
+			if strings.HasPrefix(projectFolder, "/") {
+				repoPath += projectFolder[1:]
+			} else {
+				repoPath += projectFolder
+			}
+			if ctr.Registry != "" {
+				repoPath += "/" + ctr.Registry
+			}
+			if !strings.HasSuffix(repoPath, "/") {
+				repoPath += "/"
+			}
+			repoPath += ctr.Repository
+
+			destPath := regPath + repoPath
+
+			finalPath := destPath + ":" + ctr.Tag
+
+			// find hint that matches this container image, and change accordingly
+			for hIdx, hint := range hints.Hints {
+				if hint.PackagedImage.Registry == ctr.Registry &&
+					hint.PackagedImage.Tag == ctr.Tag &&
+					hint.PackagedImage.Repository == ctr.Repository {
+					// replace with our registry and our destPath
+					hint.PackagedImage.Registry = regPath
+					hint.PackagedImage.Repository = repoPath
+					hint.PackagedImage.Tag = ctr.Tag
+					if ctr.Digest != "" {
+						hint.PackagedImage.Digest = ctr.Digest
+					}
+					// Replace value in hints
+					hints.Hints[hIdx] = hint
+				}
+			}
+
+			ctrPath := filepath.Join(ctrFolder, ctr.Tag+".tar")
+
+			// TODO try OCI first then docker
+			skopeoExec := exec.Command("skopeo", "copy", "docker-archive:"+ctrPath, "docker://"+finalPath)
+			fmt.Println("Executing", skopeoExec.String())
+
+			// Execute the command
+			err = skopeoExec.Run()
 			if err != nil {
-				return err
+				fmt.Println("Error running skopeo copy. Try skopeo login", registryUrl, "first?", err)
+				os.Exit(1)
 			}
-			if strings.HasPrefix(d.Name(), ".") {
-				return fs.SkipDir
-			}
-			if !d.IsDir() {
-				// Execute skopeo command
-				rel, err := filepath.Rel(ctrFolder, path)
-				if err != nil {
-					fmt.Println("Error finding relative path", path, err)
-					os.Exit(1)
-				}
-				fmt.Println(" - Found container archive", rel)
+		}
+		//	return nil
+		//}, )
+		//if err != nil {
+		//	fmt.Println("Error walking containers folder path", err)
+		//	os.Exit(1)
+		//}
 
-				parent := filepath.Dir(rel)
-				archiveName := d.Name()
-				ctrVersion := archiveName
-				idx := strings.LastIndex(archiveName, ".")
-				if idx != -1 {
-					ctrVersion = archiveName[:idx]
-				}
-				fmt.Println("   - Processing container with repository", parent, "and tag", ctrVersion)
-
-				// Create command and output to the terminal
-				destPath := registryUrl
-				if strings.HasPrefix(destPath, "http://") {
-					destPath = destPath[7:]
-				}
-				if strings.HasPrefix(destPath, "https://") {
-					destPath = destPath[8:]
-				}
-				if strings.HasPrefix(destPath, "oci://") {
-					destPath = destPath[6:]
-				}
-				if !strings.HasSuffix(destPath, "/") {
-					destPath += "/"
-				}
-				if strings.HasPrefix(projectFolder, "/") {
-					destPath += projectFolder[1:]
+		// Generate charts/CHARTNAME-CHARTVER-values.yaml file from hints file and any -f inputs
+		// generate values file content
+		// Note: Any overrides to the values for the local container registry are done in the above code, not here
+		valuesFile := map[string]interface{}{}
+		for _, hint := range hints.Hints {
+			// Create top level structure
+			parts := strings.Split(hint.ParentPath, ".")
+			lastLevel := valuesFile
+			for pIdx, part := range parts {
+				if pIdx == len(parts)-1 {
+					// Write contents below this
+					content := map[string]string{}
+					content[hint.RepositoryPath] = hint.PackagedImage.Repository
+					if hint.RegistryPath == hint.RepositoryPath+"./" {
+						if strings.HasSuffix(hint.PackagedImage.Registry, "/") {
+							content[hint.RepositoryPath] = hint.PackagedImage.Registry + content[hint.RepositoryPath]
+						} else {
+							content[hint.RepositoryPath] = hint.PackagedImage.Registry + "/" + content[hint.RepositoryPath]
+						}
+					} else {
+						content[hint.RegistryPath] = hint.PackagedImage.Registry
+					}
+					if hint.TagPath == hint.RepositoryPath+".:" {
+						content[hint.RepositoryPath] = content[hint.RepositoryPath] + ":" + hint.PackagedImage.Tag
+					} else {
+						content[hint.TagPath] = hint.PackagedImage.Tag
+					}
+					if hint.DigestPath != "" {
+						if hint.DigestPath == hint.RepositoryPath+".@" {
+							content[hint.RepositoryPath] = content[hint.RepositoryPath] + "@" + hint.PackagedImage.Digest
+						} else {
+							content[hint.DigestPath] = hint.PackagedImage.Digest
+						}
+					}
+					lastLevel[part] = content
 				} else {
-					destPath += projectFolder
-				}
-				if !strings.HasSuffix(destPath, "/") {
-					destPath += "/"
-				}
-				destPath += parent
-				destPath += ":" + ctrVersion
-
-				// TODO try OCI first then docker
-				skopeoExec := exec.Command("skopeo", "copy", "docker-archive:"+path, "docker://"+destPath)
-				fmt.Println("Executing", skopeoExec.String())
-
-				// Execute the command
-				err = skopeoExec.Run()
-				if err != nil {
-					fmt.Println("Error running skopeo copy. Try skopeo login", registryUrl, "first?", err)
-					os.Exit(1)
+					newIface := map[string]interface{}{}
+					lastLevel[part] = newIface
+					lastLevel = newIface
 				}
 			}
-			return nil
-		})
+		}
+		// write values file
+		valuesPath := filepath.Join(tmpFolder, "charts", kodPackage.Name+"-"+kodPackage.Version+"-values.yaml")
+		valuesBytes, err := yaml.Marshal(valuesFile)
 		if err != nil {
-			fmt.Println("Error walking containers folder path", err)
+			fmt.Println("Error marshalling values file", err)
+			os.Exit(1)
+		}
+		err = os.WriteFile(valuesPath, valuesBytes, 0644)
+		if err != nil {
+			fmt.Println("Error writing values file", err)
 			os.Exit(1)
 		}
 
@@ -153,8 +274,19 @@ Then perform a helm upgrade --install on the package.`,
 			os.Exit(0)
 		}
 
-		// TODO perform actual helm install
+		// perform actual helm install
 		fmt.Println("Executing helm...")
+		chartPath := filepath.Join(tmpFolder, "charts", kodPackage.Name+"-"+kodPackage.Version)
+		// TODO -f input overrides from command line appended too after our values file
+		helmExec := exec.Command("helm", "upgrade", "--install", deploymentName, chartPath, "-n", targetNamespace, "--create-namespace", "-f", valuesPath)
+		fmt.Println("Executing", helmExec.String())
+
+		// Execute the command
+		err = helmExec.Run()
+		if err != nil {
+			fmt.Println("Error running helm upgrade --install.", err)
+			os.Exit(1)
+		}
 
 		if cleanup {
 			fmt.Println("Cleaning up temporary folder", tmpFolder)

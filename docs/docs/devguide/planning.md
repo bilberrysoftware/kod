@@ -77,40 +77,70 @@ first.
             - https://artifacthub.io/packages/helm/prometheus-community/prometheus
             - server.image {repository (includes registry), tag (blank, defaults to Chart.appVersion), digest (blank)
                 - Note: Also checks for server.image.distroless and appends '-distroless' if it's true
-- [ ] Deploy a package (unpack to temp, invoke helm upgrade --install)
+- [X] Deploy a package (unpack to temp, invoke helm upgrade --install)
     - Note: Do an installation via helm template so we can verify we can replace all the image: values used in container spec
     - [X] Add unpack command to create temp folder first
     - [X] Process archive and list containers
-    - [ ] Execute skopeo command to upload container image
+    - [X] Execute skopeo command to upload container image
         - Turns out Skopeo requires zot to use https only for authentication and integration
-    - [ ] zot testing: Set up TLS cert and add to Microk8s trusted cert list so installation works, and skopeo verifies TLS
-- [ ] Support -r flag for the local registry base to use during deployment
-    - [ ] Test against an Ubuntu Service installation of zot
+    - [X] zot testing: Set up TLS cert and add to Microk8s trusted cert list so installation works, and skopeo verifies TLS
+- [X] Support -r flag for the local registry base to use during deployment
+    - [X] Test against an Ubuntu Service installation of zot
         - [X] Install and verify that zot is running and accessible
-        - [ ] Add --insecure-no-verify command option for bypassing TLS server checks
+        - [SKIP] Add --insecure-no-verify command option for bypassing TLS server checks
             - Note that skopeo does this the other way around, so we should add --verify by default to skopeo
-- [ ] Support helm -f / --values file flag (one or more values files) at deployment time
-    - Might be required to get the below charts working at all
-- [ ] Validate helm and kod installations are identical with the same values file (except image URL obvs)
-    - [ ] Bitnami Redis
-    - [ ] Bitnami Postgresql
-    - [ ] Bitnami MongoDB
-    - [ ] Nifi Kop operator
-    - [ ] cloudnative-pg operator
-    - [ ] Turn these tests into scripts to be executed by a CD env (but that can be ran manually)
-- [ ] Basics for v1.0-alpha1 release
+            - Skopeo must run against a valid https server with a valid cert - no way around it
+- [X] Validate helm and kod installations are identical with the same values file (except image URL obvs)
+    - [X] Bitnami Redis
+      - Fails on requiring dependency in Chart.yaml
+      - Bitnami Common: registry=oci://registry-1.docker.io/bitnamicharts, tag=bitnami-common
+    - [X] Bitnami Postgresql
+      - Same issue as above
+    - [X] Bitnami MongoDB
+        - Same issue as above
+    - [X] Nifi Kop operator
+      - Requires cert-manager
+        - Error: unable to build kubernetes objects from release manifest: [resource mapping not found for name: "nifikop-webhook-cert" namespace: "default" from "": no matches for kind "Certificate" in version "cert-manager.io/v1"
+        - ensure CRDs are installed first, resource mapping not found for name: "selfsigned-issuer" namespace: "default" from "": no matches for kind "Issuer" in version "cert-manager.io/v1"
+    - [X] cloudnative-pg operator
+      - Worked first time! Sun 06 Apr 2026 07:07
+      - Still using remote container image reference - need to rewrite that in the helm chart to the local value
+    - [X] Istio charts (Because I know these are standalone without dependencies)
+      - [X] Download source of helm chart first - we cannot use remote chart references yet 
+      - [X] istio-base
+        - Worked first time! Sun 06 Apr 2026 07:20
+        - Still using remote container image reference - need to rewrite that in the helm chart to the local value
+      - [X] istiod
+        - Worked first time! Sun 06 Apr 2026 07:20
+        - Still using remote container image reference - need to rewrite that in the helm chart to the local value
+      - [X] istio ingress gateway
+          - Worked first time! Sun 06 Apr 2026 07:23
+          - Still using remote container image reference - need to rewrite that in the helm chart to the local value
+      - Note: Istio won't actually find the correct container reference, as istiod dynamically injects it at runtime - We'll need to figure this out
+      - Note: Egress gateway needs --set or -f support
+    - [X] Turn these tests into scripts to be executed by a CD env (but that can be ran manually)
+  - Might be required to get some charts working at all
+- [X] Support local container images by pointing references in YAML to new internal registry
+    - [X] Package: Output hints file within charts folder next to its chart CHARTNAME-CHARTVER-hints.yaml
+    - [X] Deploy: Generate values file with new deployment image names and location using hints file, to CHARTNAME-CHARTVER-values.yaml in chart folder
+- [X] Basics for v1.0-alpha1 release
     - [X] Add basic documentation
-    - [ ] Ensure docs are built and pushed to the oss.bilberrysoftware.com/kod subsite
-    - [ ] Perform manual build and test of kod CLI ready to create Release bundle
+    - [X] Ensure docs are built and pushed to the oss.bilberrysoftware.com/kod subsite
+      - Created as 'kod-website' artifact in GitHub Actions workflow
+    - [X] Perform manual build and test of kod CLI ready to create Release bundle
+- [X] Complete and push this version
 
 ## 1.0 Alpha 2 release
 
+- [ ] Bug container copy on package ignores other containers in same folder - E.g. docker.io - due to 'exists' check on folder instead of file
+- [ ] Support helm -f / --values file flag (one or more values files) at deployment time
 - [ ] Invoke command on remote helm reference
     - [ ] Add a check for the helm command as this will be a prerequisite in this instance
         - [ ] -r registry flag (this indicates a remote helm chart will be used)
         - [ ] -c chart name flag
         - Note: uses helm repo add/update/save to accomplish this
     - [ ] We may need to support the helm fetch flags for OCI repositories on the package command
+- [ ] Add deploy support for helm --wait
 - [ ] Skopeo invocation enhancements
     - [ ] Stream output of skopeo copy so the user can monitor progress of the downloads
     - [ ] Check for Skopeo on path before executing package command (Note that skopeo is not available on windows)
@@ -126,8 +156,16 @@ first.
 - [ ] Allow packaging with -f option to override default values, especially image paths to a local container registry
     - [ ] Use this with helm template to parse final output to find all container image references
         - How to reverse engineer this back into properties that can be overridden?
+- [ ] Provide a --no-registry-in-path option on package so that an internal replica of public container images doesn't end up named 'myinternalregistry.local/docker.io/MYNAME:TAG' and is instead just named for its original location 'docker.io/MYNAME:TAG'
+  - Note that the image itself may still include this reference as a separate tag value
 - [ ] Read dependency chart information
-- [ ] Consider adding -o option to specify where in the container/artifact registry to save helm artifacts to
+- [ ] Consider adding -o option on deploy to specify where in the container/artifact registry to save helm artifacts to
+- [ ] Consider splitting deploy into populate and deploy commands so we have a separation of concerns between those who can write to the repo and deploy the package
+  - Still make just executing deploy check if it needs to populate, if executed from a .kodpkg
+  - Have populate command create a mypackage-myversion.kodapp file that describes where locally content resides, and that can be passed to a deployer and used in the deploy command
+    - By definition, this should include a helm values file with the necessary image elements overridden
+    - Should be another archive format, with an updated kod-package.yaml and a new kod-app.yaml and kod-values.yaml included
+      - We may not need a kod-app.yaml file, but instead update the container image references in kod-package.yaml, and change helm reference to an OCI artifact URL
 
 ## 1.0 Alpha 3 release - usage checks and environment support
 

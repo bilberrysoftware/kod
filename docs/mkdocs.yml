@@ -33,6 +33,7 @@ nav:
       - reference/index.md
       - Command Examples: reference/examples.md
       - Validated Charts: reference/validated.md
+      - Zot Commands: reference/zot.md
   - Developer's Guide:
       - devguide/index.md
       - Feature planning: devguide/planning.md
