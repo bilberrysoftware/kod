@@ -1,0 +1,42 @@
+site_name: The Kubernetes Offline Deployment (kod) tool documentation
+site_url: https://oss.bilberrysoftware.com/kod
+repo_url: https://github.com/bilberrysoftware/kod
+repo_name: bilberrysoftware/kod
+theme:
+  name: material
+  favicon: images/favicon.png
+  logo: images/logo.png
+#  icon:
+#    repo: ./docs/images/favicon.png
+  features:
+    - navigation.instant
+    - navigation.instant.prefetch
+#    - navigation.tabs
+#    - navigation.tabs.sticky
+    - navigation.expand
+    - navigation.path
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+nav:
+  - Getting Started:
+      - index.md
+      - About: about.md
+      - Installation: install.md
+      - Quick Start: quickstart.md
+      - helmfile Support: helmfile.md
+  - Reference:
+      - reference/index.md
+      - Command Examples: reference/examples.md
+      - Validated Charts: reference/validated.md
+      - Zot Commands: reference/zot.md
+  - Developer's Guide:
+      - devguide/index.md
+      - Feature planning: devguide/planning.md
+
+plugins:
+  - search

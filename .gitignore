@@ -30,3 +30,15 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Binaries
+/kod
+/kod.exe
+/integration-tests/kodit/kodit
+
+# mkdocs
+/docs/.venv
+/docs/site
+
+# GoLand
+/.idea
