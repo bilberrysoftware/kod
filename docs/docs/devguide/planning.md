@@ -130,35 +130,52 @@ first.
     - [X] Perform manual build and test of kod CLI ready to create Release bundle
 - [X] Complete and push this version
 
-## 1.0 Alpha 2 release
+## v0.2.0 release
 
-- [ ] Bug container copy on package ignores other containers in same folder - E.g. docker.io - due to 'exists' check on folder instead of file
-- [ ] Support helm -f / --values file flag (one or more values files) at deployment time
-- [ ] Invoke command on remote helm reference
-    - [ ] Add a check for the helm command as this will be a prerequisite in this instance
-        - [ ] -r registry flag (this indicates a remote helm chart will be used)
-        - [ ] -c chart name flag
-        - Note: uses helm repo add/update/save to accomplish this
-    - [ ] We may need to support the helm fetch flags for OCI repositories on the package command
-- [ ] Add deploy support for helm --wait
+- [X] Add in version CLI command support, and building of version into binary
+  - Use GoReleaser - https://goreleaser.com/getting-started/intro/
+  - [X] Change to use Semantic Versioning to be compatible with GoReleaser and other GoLang CLI norms
+- [X] Bug container copy on package ignores other containers in same folder - E.g. docker.io - due to 'exists' check on folder instead of file
+  - Was actually an incorrect error message that only showed the top level folder name - fixed to show full path to container tar file
+- [X] Support helm -f / --values file flag (one or more values files) at deployment time
+- [X] Invoke command on remote helm reference
+  - [X] -r registry flag (this indicates a remote helm chart will be used)
+  - [X] -c chart name flag
+  - Note: uses helm repo add/update/save to accomplish this
+  - [X] We may need to support the helm fetch flags for OCI repositories on the package command
+    - Used cert-manager to test, but this package doesn't deploy due to CRDs not explicitly being added via values file
+- [X] Change all exec commands to show their final output on the screen if it fails
+- [X] Add a check for the helm command as this will be a prerequisite in this instance
+- [X] Add deploy support for helm --wait
+- [X] Ensure that the *nix TMPDIR=/some/other/folder options are being followed by os.TempDir() in GoLang - YES Obeyed
 - [ ] Skopeo invocation enhancements
-    - [ ] Stream output of skopeo copy so the user can monitor progress of the downloads
-    - [ ] Check for Skopeo on path before executing package command (Note that skopeo is not available on windows)
-    - [ ] Check to see if skopeo needs to be logged in to access any of the containers mentioned (and prompt if so)
-    - [ ] Fetch container info to determine digest, and save this to the container info in the package file
-    - [ ] Further image detection improvements
-        - [ ] Another convention is global.imageRegistry (2 of top ten) (and imagePullSecrets) (Will override other registry refs)
-        - [ ] Search entire tree for '.*\[iI\]mage' and sub elements (4 of top ten)
-        - [ ] Allow specification of container images, and links to config elements, for things we cannot guess - kod-hints.yaml
-            - Note: include this as kod-hints.yaml in the output archive too
-    - [ ] Read images required from the deployment YAML templates (helm template), and reverse parse their parameters (Complex)
-        - If it works, we should be able to support any helm chart OOTB without a hints file
+  - [X] Stream output of skopeo copy so the user can monitor progress of the downloads
+  - [X] Check for Skopeo on path before executing package command (Note that skopeo is not available on windows)
+  - [X] Add --retry-times 5 flag to skopeo copy commands for resilience
+  - [X] Check to see if skopeo needs to be logged in to access any of the containers mentioned (and error if so)
+    - Only doing this for deploy, as we may well have anonymous access to fetch container images on package
+  - [X] Fetch container info to determine digest, and save this to the container info in the package file
+    - via `skopeo inspect docker://someregistry/myimagename` or oci:// URL
+    - Add in SkopeoInspectResult YAML as a result type
+  - [ ] Further image detection improvements
+    - [ ] Another convention is global.imageRegistry (2 of top ten) (and imagePullSecrets) (Will override other registry refs)
+    - [ ] Search entire tree for '.*\[iI\]mage' and sub elements (4 of top ten)
+    - [ ] Allow specification of container images, and links to config elements, for things we cannot guess - kod-hints.yaml
+      - Note: include this as kod-hints.yaml in the output archive too
+  - [ ] Read images required from the deployment YAML templates (helm template), and reverse parse their parameters (Complex)
+    - If it works, we should be able to support any helm chart OOTB without a hints file
 - [ ] Allow packaging with -f option to override default values, especially image paths to a local container registry
-    - [ ] Use this with helm template to parse final output to find all container image references
-        - How to reverse engineer this back into properties that can be overridden?
-- [ ] Provide a --no-registry-in-path option on package so that an internal replica of public container images doesn't end up named 'myinternalregistry.local/docker.io/MYNAME:TAG' and is instead just named for its original location 'docker.io/MYNAME:TAG'
+  - [ ] Use this with helm template to parse final output to find all container image references
+    - How to reverse engineer this back into properties that can be overridden?
+  - [ ] Include these as CHARTNAME-CHARTVERSION-001-values.yaml and 002, 003 etc within the package
+    - This is particularly useful for providing default, well known, configuration to data layer helm charts (Kafka, Nifi, elasticsearch, MongoDB et al)
+  - [ ] Update deploy to use these values files
+- [ ] Helm enhancements
+  - [ ] Check to see if helm needs to be logged in when fetching packages, or errors due to this on package
+- [ ] Provide a --hide-registry-urls option on package so that an internal replica of public container images doesn't end up named 'myinternalregistry.local/docker.io/MYNAME:TAG' and is instead just named for its original location 'docker.io/MYNAME:TAG'
   - Note that the image itself may still include this reference as a separate tag value
 - [ ] Read dependency chart information
+  - Required for all Bitnami charts that use the bitnami-common dependency (Redis, MongoDB are known)
 - [ ] Consider adding -o option on deploy to specify where in the container/artifact registry to save helm artifacts to
 - [ ] Consider splitting deploy into populate and deploy commands so we have a separation of concerns between those who can write to the repo and deploy the package
   - Still make just executing deploy check if it needs to populate, if executed from a .kodpkg
@@ -166,9 +183,18 @@ first.
     - By definition, this should include a helm values file with the necessary image elements overridden
     - Should be another archive format, with an updated kod-package.yaml and a new kod-app.yaml and kod-values.yaml included
       - We may not need a kod-app.yaml file, but instead update the container image references in kod-package.yaml, and change helm reference to an OCI artifact URL
+- [ ] Add examples to the help output of all kod commands. E.g. chart locally, chart on OCI url etc.
+- [ ] Apply Linux Foundation standards to repo - code of conduct, contributing, security reporting, etc.
+- [ ] How do we know we have succeeded?
+  - [ ] Bitnami Redis chart works (Chart Dependencies)
+  - [ ] Bitnami MongoDB chart works (Chart Dependencies)
+  - [ ] Cloudnative Postgres chart (NOT Bitnami version) - https://github.com/cloudnative-pg/charts
+  - [ ] Cert-manager chart works (Remote chart, non-standard image location)
+  - [ ] Nifikop operator works (Remote chart + OCI) `go run main.go deploy -n nifi-operator -p /tmp/kod-nifikop-1.16.0.kodpkg -r  https://REGISTRY:8080/ -d nifikop -f examples/charts/nifikop/basic-values.yaml`
 
-## 1.0 Alpha 3 release - usage checks and environment support
+## v0.3.0  release - usage checks and environment support
 
+- [ ] Ensure Istio works with kod (Because I personally really want to use it with Istio!)
 - [ ] Add in checks for all required/optional values for each command, and sensible values checks
 - [ ] Enforce best practice. E.g. no 'latest' tag versions, and add --allow-latest-tag flag
 - [ ] Error if container image being copied matches an existing one but has a different Digest value
@@ -177,7 +203,7 @@ first.
     - If specified, place name of target architecture in the archive file name
     - Add specification of container architecture for deployment, if supported by skopeo (i.e. from 'all' archs archive)
 
-## 1.0 Alpha 4 release - more complex chart installation use cases
+## v0.4.0 release - more complex chart installation use cases
 
 - [ ] Add single helmfile support
     - [ ] Check for helmfile CLI on the path
@@ -191,35 +217,61 @@ first.
         - This must be avoided, otherwise semantics like -f to specify override helm chart values files and -n for namespace make no sense
         - Prefer multiple invocations of kod and separate packages for distinct charts
 
-## 1.0 Beta 1 release - Usability and compliance improvements
+## v0.5.0 release - Usability and compliance improvements
 
+- [ ] Add `package-tools` support - To enable all offline external components to be packaged
+  - Note: Linux amd64 support only initially
+  - [ ] Include skopeo, helm3, kubectl, and of course kod itself
+  - [ ] Include a helper install.sh in the package
+  - [ ] Add `deploy-tools` support that unpacks and executes install.sh
+    - Note: Would work with any tgz with an install.sh file in it
+      - Add auto archive format detection support to deploy command to support this use case
+  - [ ] Add `unpack-tools` support to unpack but not install the archive
+  - [ ] Add --local flag to copy ones on the local system instead of downloading the latest from the interwebs
+    - Or do the opposite by adding a --latest flag to download the latest only
+  - [ ] Consider adding --extras flag to include some of my favourite tools - kube-capacity, zotcli
+  - [ ] Add MacOS support (arm64)
+- [ ] Add package-zot to package up zot binaries and cli and an install.sh script - Linux Ubuntu amd64 only
 - [ ] Add bash completion support - See https://cobra.dev/docs/how-to-guides/shell-completion/
 - [ ] Add --ci flag to not prompt with questions (E.g. skopeo login)
-- [ ] Add --output-commands-only to only output the manual bash commands to carry out the necessary actions, and no other logged information, without carrying the commands out.
-- [ ] Generate SBOM files during generation
+- [ ] Add --output-commands-only to deploy to only output the manual bash commands to carry out the necessary actions, and no other logged information, without carrying the commands out.
+- [ ] Generate SBOM files during package generation
 - [ ] Output sha256 digest file alongside archive
 - [ ] Log sha256 hashes of components within a sumfile in the archive itself too, and check this on all command invocations
-    - Can also be used to see if unpacking commands need re-running on partial unpack/deploy failures
+  - Can also be used to see if unpacking commands need re-running on partial unpack/deploy failures
+  - Fail on deploy if the sha doesn't match
+- [ ] Add sha256sum support to package-tools, deploy-tools, package-zot, deploy-zot too
 
-## 1.0 Beta 2 release - Ease of use enhancements
+## v0.6.0 release - Ease of use enhancements, and OCI support
 
 - [ ] Add common mappings for the top ten charts' image specs into the kod binary
 - [ ] Add colour terminal and emoji support to the output in the terminal
 - [ ] Add --cleanup flag to package and deploy to clean up temporary folder after all operations (except unpack)
 - [ ] Add --sanitise flag to remove the internal container registry names from the helm charts and hints files, and generate our own
 - [ ] Add support for local .tgz helm chart archives for `package -c`
-- [ ] Add support for `oci://` URLs for helm chart archives via `package -c`
+- [X] Done on Mon 06 Apr 2026 - Add support for `oci://` URLs for helm chart archives via `package -c`
+- [ ] OCI artifact support
+  - [ ] Add a populate command which is basically deploy with --no-install specified 
+  - [ ] Store deployed/populated helm charts in a target OCI repository, if the registry supports OCI artifacts
+  - [ ] Store a kodpkg in the target OCI registry directly (I.e. `populate --no-unpack`)
+  - [ ] Rework the kodpkg format as required such that the hints files and values overrides are within their own artifact
+    - This may well actually be the kodinfo package format for a helm chart
+  - [ ] Ensure `deploy -c` supports an OCI URL to a kodinfo OCI artifact archive
+    - Note: Maintain the old file-system based functionality so that we continue to support non-OCI registries or target environments
 - [ ] Add support for artifactory URLs for helm chart archives via `--rt` flag and the `jf rt dl` command, if jf is installed
+  - Do this as an addon?
+  - Also need to update the package-tools command to include --rt and the jfrog cli
 
-## 1.0 RC 1 release - Release automation
+## v0.7.0 release - Release automation
 
 - [ ] Create GitHub Actions build and CI linting check support
 - [ ] Create Concourse public builds and testing pipeline
-- [ ] Add in version CLI command support, and building of version into binary
-- [ ] Add support for GoLang builds onto multiple environments
-- [ ] Push out a v1.0-rc1 release package using Concourse as a pipe cleaning exercise
+  - Include support for Windows, arm64, raspberry pi arm architectures
+- [X] Done on Mon 06 Apr 2026 - via GoReleaser and GitHub Actions - Add support for GoLang builds onto multiple environments
+- [X] Done on Mon 06 Apr 2026 - via GitHub Actions instead - Push out a v1.0-rc1 release package using Concourse as a pipe cleaning exercise
+  - Note: It's a manual step to tag a release, so just run Concourse tests after a commit to main but before a tagging to ensure all platforms pass before release
 
-## 1.0 RC 2 release - Ensure V1 is ready for prime time
+## v0.8.0 release - Ensure V1 is ready for prime time
 
 - [ ] Add in community required files, security procedure, etc
 - [ ] Ensure new Bilberry website is live, with a page about kod, and links to/from kod repo
@@ -227,9 +279,17 @@ first.
 - [ ] Add automated creation of an Issue (bug) if a CD build or integration test fails
 - Anything glaring I've missed...
 
-## 1.0 full release
+## v1.0.0 full release
 
 - Should hopefully just be a more solid build of rc2, with automated publishing
+
+## v1.1.0 release - Helm chart and helmfile consumption and kod package generation aids
+
+- [ ] Self-publishing support - Consider adding a way to allow third party helm/helmfile developers to include default values and hints file without us creating it
+  - E.g. a .kodinfo package containing a kod-package.yaml, one or more MYCHART-MYCHARTVER-kod-hints.yaml files
+  - Will require an update to the package command E.g. -i <mypackage.kodinfo>
+  - Should support fetching over public https (E.g. to published website or GitHub direct file URL)
+  - Consider how this would compose if, for example, someone created two helm charts with a kodinfo and one helmfile referencing them with its own kodinfo
 
 ## Descoped
 

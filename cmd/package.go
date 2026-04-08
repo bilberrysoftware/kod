@@ -5,7 +5,10 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"kod/internal"
 	"kod/types"
 	"os"
 	"os/exec"
@@ -18,6 +21,7 @@ import (
 )
 
 var chartPath string
+var chartRegistry string
 
 // packageCmd represents the package command
 var packageCmd = &cobra.Command{
@@ -27,19 +31,274 @@ var packageCmd = &cobra.Command{
 and all of its constituent container images.`,
 	Run: func(cmd *cobra.Command, args []string) {
 
+		// sanity check that our dependent commands exist
+		if !internal.CommandExists("skopeo") {
+			fmt.Println("skopeo not installed. Cannot proceed. Exiting.")
+			os.Exit(1)
+		}
+		if !internal.CommandExists("helm") {
+			fmt.Println("helm not installed. Cannot proceed. Exiting.")
+			os.Exit(1)
+		}
+
 		// TODO sanity check parameter values
 
+		// Default chartFolder to chartPath
+		chartFolder := chartPath
+
+		fmt.Println("chart registry:", chartRegistry)
+		// If chart is remote, fetch using helm repo add/update and helm save, then unpack the tar (Don't repack it later - just copy and rename)
+		if "" != chartRegistry {
+			fmt.Println("Using chart registry:", chartRegistry)
+			// create helm local repo name from last part of URL
+			// Known examples:-
+			// - Redis Operator
+			//   - helm repo add ot-helm https://ot-container-kit.github.io/helm-charts/
+			//   - helm install redis-operator ot-helm/redis-operator --namespace ot-operators --set featureGates.GenerateConfigInInitContainer=true
+			// - cert-manager
+			//   - helm repo add jetstack https://charts.jetstack.io
+			//   - helm install cert-manager --namespace cert-manager --version v1.17.2 jetstack/cert-manager
+			// - Nifikop Operator (OCI Artifact URL)
+			//   - helm install nifikop oci://ghcr.io/konpyutaika/helm-charts/nifikop --namespace=nifi --version 0.13.0 ...
+
+			// Generate temporary file name
+			predNameString := chartRegistry + chartPath
+			h := sha256.New()
+			h.Write([]byte(predNameString))
+			predictableNameHash := h.Sum(nil)
+			predictableName := base64.RawStdEncoding.EncodeToString(predictableNameHash)
+			//tempChartArchive := filepath.Join(os.TempDir(), "kod-"+predictableName+".tgz")
+			chartFolder = filepath.Join(os.TempDir(), "kod-"+predictableName)
+
+			//chartName := ""
+			//chartVersion := ""
+
+			// Fetch chart
+			if strings.HasPrefix(chartRegistry, "https://") {
+				// We have a https helm3 registry URL. Name of the chart is in the -c option
+				// Now fetch the chart from a HTTPS URL (Public with no auth)
+
+				helmRepoAddExec := exec.Command("helm", "repo", "add", predictableName, chartRegistry, "--force-update")
+				fmt.Println("Executing", helmRepoAddExec.String())
+				helmRepoAddOutput, err := helmRepoAddExec.Output()
+				if err != nil {
+					fmt.Println("Error executing helm repo add:", err, "details:", helmRepoAddOutput)
+					os.Exit(1)
+				}
+
+				helmRepoUpdateExec := exec.Command("helm", "repo", "update")
+				fmt.Println("Executing", helmRepoUpdateExec.String())
+				helmRepoUpdateOutput, err := helmRepoUpdateExec.Output()
+				if err != nil {
+					fmt.Println("Error executing helm repo update:", err, "details:", helmRepoUpdateOutput)
+					os.Exit(1)
+				}
+
+				// use helm search to find our target chart
+				//helmRepoSearchExec := exec.Command("helm", "repo", "search", "-oyaml")
+				//fmt.Println("Executing", helmRepoSearchExec.String())
+				//searchOutput, err := helmRepoSearchExec.Output()
+				//if err != nil {
+				//	fmt.Println("Error executing helm repo search:", err)
+				//	os.Exit(1)
+				//}
+				//// Now get the output from this command and parse it
+				//searchResults := types.HelmSearchResults{}
+				//err = yaml.Unmarshal(searchOutput, &searchResults)
+				//if err != nil {
+				//	fmt.Println("Error unmarshalling helm search results:", err)
+				//	os.Exit(1)
+				//}
+				//// Now find the chart we've got in chartPath, but don't forget our prefix
+				//shortRef := predictableName + "/" + chartPath
+				//searchResult := types.HelmSearchResult{}
+				//found := false
+				//for _, sr := range searchResults {
+				//	if sr.Name == shortRef {
+				//		found = true
+				//		searchResult = sr
+				//	}
+				//}
+				//if found {
+				//	fmt.Println(fmt.Sprintf("Found Helm chart %s in %s (Registry: %s)", chartPath, shortRef, chartRegistry))
+				//	chartName = chartPath
+				//	chartVersion = searchResult.Version
+				//}
+
+				// Now save the chart to our temporary archive
+				helmPullExec := exec.Command("helm", "pull", predictableName+"/"+chartPath, "--untar", "--untardir", chartFolder)
+				fmt.Println("Executing", helmPullExec.String())
+				helmPullOutput, err := helmPullExec.Output()
+				if err != nil {
+					fmt.Println("Error executing helm pull:", err, "details:", helmPullOutput)
+					os.Exit(1)
+				}
+
+				// Note that helm pull uses the chart name as a subfolder
+				chartFolder = filepath.Join(chartFolder, chartPath)
+				fmt.Println("Saved helm chart to " + chartFolder)
+
+				// Now unarchive it - it's a tar.gz file
+
+				// Use archives to unpack this into the temporary folder (includes path within archive)
+				//format := archives.CompressedArchive{
+				//	Compression: archives.Gz{},
+				//	Extraction:  archives.Tar{},
+				//}
+				//fh, err := os.Open(tempChartArchive)
+				//if err != nil {
+				//	fmt.Println("Error opening chart tgz archive file:", err)
+				//	os.Exit(1)
+				//}
+				//defer fh.Close()
+				//outAbs, err := filepath.Abs(chartFolder)
+				//if err != nil {
+				//	fmt.Println(fmt.Errorf("calling filepath.Abs on output dir '%s' failed: %w", chartFolder, err))
+				//	os.Exit(1)
+				//}
+				//err = format.Extract(context.Background(), fh,
+				//	func(ctx context.Context, fi archives.FileInfo) error {
+				//		nameInArchive := fi.NameInArchive
+				//
+				//		if nameInArchive == "" || nameInArchive == "." {
+				//			return nil
+				//		}
+				//
+				//		cleanName := filepath.Clean(nameInArchive)
+				//		destPath := filepath.Join(outAbs, cleanName)
+				//
+				//		destAbs, err := filepath.Abs(destPath)
+				//		if err != nil {
+				//			return fmt.Errorf("calling filepath.Abs on dest path '%s' failed: %w", destPath, err)
+				//		}
+				//
+				//		// Avoid traversal attacks
+				//		if !strings.HasPrefix(destAbs, outAbs+string(os.PathSeparator)) && destAbs != outAbs {
+				//			return fmt.Errorf("unsafe path in archive: %q", nameInArchive)
+				//		}
+				//
+				//		// Create directory if in archive
+				//		info, err := fi.Stat()
+				//		if err != nil {
+				//			return fmt.Errorf("stat on %q failed: %w", nameInArchive, err)
+				//		}
+				//		if info.IsDir() {
+				//			return os.MkdirAll(destAbs, 0o755)
+				//		}
+				//
+				//		// Ensure parent directories exist
+				//		if err := os.MkdirAll(filepath.Dir(destAbs), 0o755); err != nil {
+				//			return fmt.Errorf("mkdir on parent '%s' failed: %w", destAbs, err)
+				//		}
+				//
+				//		// Open archive entry for reading
+				//		rc, err := fi.Open()
+				//		if err != nil {
+				//			return fmt.Errorf("open entry %q failed: %w", nameInArchive, err)
+				//		}
+				//		defer rc.Close()
+				//
+				//		// Create destination file
+				//		outFile, err := os.OpenFile(destAbs, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+				//		if err != nil {
+				//			return fmt.Errorf("create on %q failed: %w", destAbs, err)
+				//		}
+				//		defer outFile.Close()
+				//
+				//		// Copy contents
+				//		if _, err := io.Copy(outFile, rc); err != nil {
+				//			return fmt.Errorf("copy on %q failed: %w", nameInArchive, err)
+				//		}
+				//
+				//		return nil
+				//	})
+				//if err != nil {
+				//	fmt.Println("Error unpacking chart tgz:", err)
+				//	os.Exit(1)
+				//}
+				fmt.Println(fmt.Sprintf("Chart '%s' from registry '%s' unpacked to temporary folder '%s'", chartPath, chartRegistry, chartFolder))
+
+				//resp, err := http.Get(chartRegistry)
+				//if err != nil {
+				//	fmt.Println("Error fetching chart at registry:", chartRegistry, err)
+				//	os.Exit(1)
+				//}
+				//defer resp.Body.Close()
+				//
+				//// TODO handle redirects
+				//if resp.StatusCode != http.StatusOK {
+				//	fmt.Println("Failed to fetch chart at registry:", chartRegistry, "Error Status not OK:", resp.StatusCode)
+				//	os.Exit(1)
+				//}
+				//// Now stream the response to our file
+				//body,err := io.ReadAll(resp.Body)
+				//if err != nil {
+				//	fmt.Println("Error reading chart registry fetch response body:", err)
+				//	os.Exit(1)
+				//}
+				//err = os.WriteFile(tempChartArchive, body, 0644)
+				//if err != nil {
+				//	fmt.Println("Error creating temporary chart archive for chart registry:", err)
+				//}
+
+			} else {
+				if strings.HasPrefix(chartRegistry, "oci://") {
+					// We have an OCI registry url, which INCLUDES the -c path. So if -c is included, warn but append to URL
+					if "" != chartPath && "." != chartPath {
+						newOciUrl := chartRegistry
+						if !strings.HasSuffix(newOciUrl, "/") {
+							newOciUrl += "/"
+						}
+						newOciUrl += chartPath
+						fmt.Println(fmt.Sprintf("WARNING: You are using an OCI Registry (-r) URL with a chart path (-c). Normally, you just use the full OCI URL with the -r option. We've rewritten your OCI URL to: %s", newOciUrl))
+						chartPath = ""
+						chartRegistry = newOciUrl
+					}
+
+					// TODO unpack chart
+					// Try direct download using helm pull with OCI format URL
+
+					helmPullExec := exec.Command("helm", "pull", chartRegistry, "--untar", "--untardir", chartFolder)
+					fmt.Println("Executing", helmPullExec.String())
+					helmPullOutput, err := helmPullExec.Output()
+					if err != nil {
+						fmt.Println("Error executing OCI helm pull:", err, "details:", helmPullOutput)
+						os.Exit(1)
+					}
+
+					// Note that helm pull uses the chart name as a subfolder
+					// Take the last part of the OCI URL as the chart folder name
+					idx := strings.LastIndex(chartRegistry, "/")
+					if -1 == idx {
+						fmt.Println("Error extracting chart name from OCI URL:", chartRegistry, err)
+						os.Exit(1)
+					}
+					chartPath = chartRegistry[idx+1:]
+					chartFolder = filepath.Join(chartFolder, chartPath)
+					fmt.Println("Saved helm chart to " + chartFolder)
+
+				} else {
+					fmt.Println("Unsupported helm registry URL scheme (We support https:// and oci://):", chartRegistry)
+				}
+			}
+
+			// Unpack to a temporary folder
+			// set chartFolder appropriately
+		} else {
+			fmt.Println("Using local chart folder:", chartPath)
+		}
+
 		// See if the Chart.yaml file exists, error if not
-		folder, err := os.Stat(chartPath)
+		folder, err := os.Stat(chartFolder)
 		if err != nil {
-			fmt.Println(chartPath, "does not exist")
+			fmt.Println(chartFolder, "does not exist")
 			os.Exit(1)
 		}
 		if !folder.IsDir() {
-			fmt.Println("Chart folder", chartPath, "is not a directory")
+			fmt.Println("Chart folder", chartFolder, "is not a directory")
 			os.Exit(1)
 		}
-		chartYaml := filepath.Join(chartPath, "Chart.yaml")
+		chartYaml := filepath.Join(chartFolder, "Chart.yaml")
 		chartYamlFile, err := os.Stat(chartYaml)
 		if err != nil {
 			fmt.Println(chartYaml, "does not exist")
@@ -62,7 +321,7 @@ and all of its constituent container images.`,
 			os.Exit(1)
 		}
 		// Now print what we've found
-		fmt.Println(fmt.Sprintf("Packaging chart:: name: '%s', version: '%s', appVersion: `%s`",
+		fmt.Println(fmt.Sprintf("Packaging chart. name: '%s', version: '%s', appVersion: `%s`",
 			chartDef.Name, chartDef.Version, chartDef.AppVersion))
 		// Create temporary folder based on chart name and version
 		chartAndVersion := fmt.Sprintf("%s-%s", chartDef.Name, chartDef.Version)
@@ -77,7 +336,7 @@ and all of its constituent container images.`,
 		// Determine the container images required
 		var containers []types.ContainerImage
 		// Read the values YAML file and look for common properties
-		valuesPath := filepath.Join(chartPath, "values.yaml")
+		valuesPath := filepath.Join(chartFolder, "values.yaml")
 		valuesFile, err := os.Stat(valuesPath)
 		if err != nil {
 			fmt.Println(valuesPath, "does not exist")
@@ -190,20 +449,6 @@ and all of its constituent container images.`,
 			}
 		}
 
-		// Now write our summary file
-		fmt.Println("Writing kod package file...")
-		pkgDef := types.Package{
-			Name:       chartDef.Name,
-			Version:    chartDef.Version,
-			Type:       "helm",
-			Sources:    chartDef.Sources,
-			Containers: containers,
-		}
-		pkgBytes, err := yaml.Marshal(pkgDef)
-		packageFilePath := filepath.Join(tempPath, "kod-package.yaml")
-		err = os.WriteFile(packageFilePath, pkgBytes, os.ModePerm)
-		fmt.Println("Written package definition to temporary file", packageFilePath)
-
 		// Copy the Chart folder into a subfolder
 		fmt.Println("Copying the helm chart...")
 		chartCopyPath := filepath.Join(tempPath, "charts", chartAndVersion)
@@ -217,9 +462,9 @@ and all of its constituent container images.`,
 				fmt.Println("Error copying chart to temporary folder:", chartCopyPath, ",", err)
 				os.Exit(1)
 			}
-			err = os.CopyFS(chartCopyPath, os.DirFS(chartPath))
+			err = os.CopyFS(chartCopyPath, os.DirFS(chartFolder))
 			if err != nil {
-				fmt.Println("Error copying chart to temporary folder from:", chartPath, "to:", chartCopyPath, ",", err)
+				fmt.Println("Error copying chart to temporary folder from:", chartFolder, "to:", chartCopyPath, ",", err)
 				os.Exit(1)
 			}
 			// Copy hints file over
@@ -246,35 +491,76 @@ and all of its constituent container images.`,
 			fmt.Println("Error creating containers folder:", ctrFolder, "error:", err)
 			os.Exit(1)
 		}
-		for _, ctr := range containers {
+		for ctrIdx, ctr := range containers {
 			cf := filepath.Join(ctrFolder, ctr.Registry)
 			ctrFile := filepath.Join(cf, ctr.Repository, ctr.Tag+".tar") // changed so that last filename is the tag version, incase container name and version both have hyphens!
 			_, err = os.Stat(ctrFile)
 			if err == nil {
-				fmt.Println("Container folder exists, skipping skopeo copy to", cf)
+				fmt.Println("Container folder exists, skipping skopeo copy to", ctrFile)
 			} else {
 				parent := filepath.Dir(ctrFile)
 				err = os.MkdirAll(parent, os.ModePerm)
 				if err != nil {
-					fmt.Println("Error creating container folder:", cf, "error:", err)
+					fmt.Println("Error creating container folder:", ctrFile, "error:", err)
 					os.Exit(1)
 				}
+
+				// try to inspect the container image now to list available tags
+				imagePath := "docker://" + ctr.Registry + "/" + ctr.Repository
+				skopeoInspectExec := exec.Command("skopeo", "inspect", imagePath)
+				var skopeoInspectOutput internal.SaveOutput
+				skopeoInspectOutput.NoEchoToStdOut = true
+				skopeoInspectExec.Stdin = os.Stdin
+				skopeoInspectExec.Stdout = &skopeoInspectOutput
+				skopeoInspectExec.Stderr = os.Stderr
+				err = skopeoInspectExec.Run()
+				if err != nil {
+					fmt.Println("Error inspecting skopeo image:", ctrFile, "error:", err, "details:", skopeoInspectOutput.String())
+					os.Exit(1)
+				}
+				// Now parse output and set Digest to this value
+				var inspectData = types.SkopeoInspectResult{}
+				err = yaml.Unmarshal(skopeoInspectOutput.SavedOutput, &inspectData)
+				if err != nil {
+					fmt.Println("Error unmarshaling inspect result:", ctrFile, "error:", err)
+					os.Exit(1)
+				}
+				// If Digest already set, validate the digest is the SAME
+				if "" != ctr.Digest && "" != inspectData.Digest {
+					if inspectData.Digest != ctr.Digest {
+						fmt.Println("WARNING: Declared digest for container in helm and in registry are different. Helm digest:", ctr.Digest, "registry digest:", inspectData.Digest, "Continuing anyway. Overwriting Digest value.")
+					}
+				}
+				// Set container digest
+				ctr.Digest = inspectData.Digest
+				containers[ctrIdx] = ctr // sets the value
+
+				// TODO change the below to verify if the requested tag is available
 				// Now invoke skopeo - skopeo copy docker://quay.io/buildah/stable docker-archive:///tmp/kod-redis-1.2.3/containers/docker.io/redis/1.2.3
 				srcPath := "docker://" + ctr.Registry + "/" + ctr.Repository + ":" + ctr.Tag
 				if ctr.Digest != "" {
 					srcPath = "docker://" + ctr.Registry + "/" + ctr.Repository + "@" + ctr.Digest
 				}
-				skopeoExec := exec.Command("skopeo", "copy", srcPath, "docker-archive:"+ctrFile)
+				skopeoExec := exec.Command("skopeo", "copy", srcPath, "docker-archive:"+ctrFile, "--retry-times", "5")
+				var skopeoOutput internal.SaveOutput
+				skopeoExec.Stdin = os.Stdin
+				skopeoExec.Stdout = &skopeoOutput
+				skopeoExec.Stderr = os.Stderr
 				fmt.Println("Executing", skopeoExec.String())
-				err = skopeoExec.Run()
+				err := skopeoExec.Run()
 				if err != nil {
-					fmt.Println("Error running skopeo copy:", err)
+					fmt.Println("Error running skopeo copy:", err, "details:", skopeoOutput.String())
 					fmt.Println("Trying backup approach of using tag 'latest' (Needed for many Bitnami container images)")
 					srcPath = "docker://" + ctr.Registry + "/" + ctr.Repository + ":latest"
-					skopeoExec = exec.Command("skopeo", "copy", srcPath, "docker-archive:"+ctrFile)
+					skopeoOutput.Clear()
+					skopeoExec = exec.Command("skopeo", "copy", srcPath, "docker-archive:"+ctrFile, "--retry-times", "5")
+					skopeoExec.Stdin = os.Stdin
+					skopeoExec.Stdout = &skopeoOutput
+					skopeoExec.Stderr = os.Stderr
 					fmt.Println("Executing", skopeoExec.String())
 					err = skopeoExec.Run()
 					if err != nil {
+						fmt.Println("Error running skopeo copy using latest tag:", err, "details:", skopeoOutput.String())
 						os.Exit(1)
 					}
 				}
@@ -282,6 +568,20 @@ and all of its constituent container images.`,
 			}
 			// TODO if there's an error, delete the folder so it downloads on the next execution
 		}
+
+		// Now write our summary file - done here so container digests are known
+		fmt.Println("Writing kod package file...")
+		pkgDef := types.Package{
+			Name:       chartDef.Name,
+			Version:    chartDef.Version,
+			Type:       "helm",
+			Sources:    chartDef.Sources,
+			Containers: containers,
+		}
+		pkgBytes, err := yaml.Marshal(pkgDef)
+		packageFilePath := filepath.Join(tempPath, "kod-package.yaml")
+		err = os.WriteFile(packageFilePath, pkgBytes, os.ModePerm)
+		fmt.Println("Written package definition to temporary file", packageFilePath)
 
 		// Now package the temp folder as a tar.xz but with the kodpkg extension
 		files, err := archives.FilesFromDisk(context.Background(), nil, map[string]string{
@@ -332,5 +632,6 @@ func init() {
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
 	// packageCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-	packageCmd.Flags().StringVarP(&chartPath, "chart", "c", ".", "Folder path containing the helm chart to package")
+	packageCmd.Flags().StringVarP(&chartPath, "chart", "c", ".", "Folder path containing the local helm chart to package, or the repository path if a remote chart (See -r)")
+	packageCmd.Flags().StringVarP(&chartRegistry, "registry", "r", "", "Registry URL of helm or OCI repo if the chart is remote")
 }

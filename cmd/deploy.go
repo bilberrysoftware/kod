@@ -20,6 +20,7 @@ import (
 var skipInstall = false
 var cleanup = false
 var insecureNoVerify = false
+var helmWait = false
 var deploymentName = ""
 var targetNamespace = ""
 var registryUrl = ""
@@ -37,11 +38,39 @@ Then perform a helm upgrade --install on the package.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("deploy called")
 
+		// sanity check that our dependent commands exist
+		if !internal.CommandExists("skopeo") {
+			fmt.Println("skopeo not installed. Cannot proceed. Exiting.")
+			os.Exit(1)
+		}
+		if !internal.CommandExists("helm") {
+			fmt.Println("helm not installed. Cannot proceed. Exiting.")
+			os.Exit(1)
+		}
+
 		// TODO sanity check parameter values
 		//if projectFolder == "" {
 		//	fmt.Println("WARNING projectFolder (-j flag) not set. Defaulting to 'kod/containers'")
 		//	projectFolder = "kod/containers"
 		//}
+
+		// Check that skopeo is logged in already
+		skopeoLoginExec := exec.Command("skopeo", "login", "--get-login", registryUrl)
+
+		var skopeoLoginOutput internal.SaveOutput
+		skopeoLoginExec.Stdin = os.Stdin
+		skopeoLoginExec.Stdout = &skopeoLoginOutput
+		skopeoLoginExec.Stderr = os.Stderr
+
+		err := skopeoLoginExec.Run()
+		if err != nil {
+			fmt.Println("Error executing skopeo login check against target registry:", err, "details:", skopeoLoginOutput.String())
+			fmt.Println("You must be logged in to your container registry to be able to upload container images. Exiting.")
+			os.Exit(1)
+		}
+		fmt.Println("Skopeo login successful as user:", skopeoLoginOutput.String(), "to registry:", registryUrl)
+
+		// TODO Check that helm/kubectl is logged into target cluster just prior to deployment (ignore if --no-install is set)
 
 		// unpack archive to a temporary folder
 		fmt.Println("Unpacking kod package...")
@@ -187,13 +216,17 @@ Then perform a helm upgrade --install on the package.`,
 			ctrPath := filepath.Join(ctrFolder, ctr.Tag+".tar")
 
 			// TODO try OCI first then docker
-			skopeoExec := exec.Command("skopeo", "copy", "docker-archive:"+ctrPath, "docker://"+finalPath)
+			skopeoExec := exec.Command("skopeo", "copy", "docker-archive:"+ctrPath, "docker://"+finalPath, "--retry-times", "5")
 			fmt.Println("Executing", skopeoExec.String())
+			var skopeoOutput internal.SaveOutput
+			skopeoExec.Stdin = os.Stdin
+			skopeoExec.Stdout = &skopeoOutput
+			skopeoExec.Stderr = os.Stderr
 
 			// Execute the command
-			err = skopeoExec.Run()
+			err := skopeoExec.Run()
 			if err != nil {
-				fmt.Println("Error running skopeo copy. Try skopeo login", registryUrl, "first?", err)
+				fmt.Println("Error running skopeo copy. Try skopeo login", registryUrl, "first?", err, "details:", skopeoOutput.String())
 				os.Exit(1)
 			}
 		}
@@ -277,14 +310,23 @@ Then perform a helm upgrade --install on the package.`,
 		// perform actual helm install
 		fmt.Println("Executing helm...")
 		chartPath := filepath.Join(tmpFolder, "charts", kodPackage.Name+"-"+kodPackage.Version)
-		// TODO -f input overrides from command line appended too after our values file
-		helmExec := exec.Command("helm", "upgrade", "--install", deploymentName, chartPath, "-n", targetNamespace, "--create-namespace", "-f", valuesPath)
+
+		cmdArgs := []string{"upgrade", "--install", deploymentName, chartPath, "-n", targetNamespace, "--create-namespace", "-f", valuesPath}
+		// Include -f values file overrides from command line appended too after our values file
+		for _, vf := range valuesFiles {
+			cmdArgs = append(cmdArgs, "-f")
+			cmdArgs = append(cmdArgs, vf)
+		}
+		if helmWait {
+			cmdArgs = append(cmdArgs, "--wait")
+		}
+		helmExec := exec.Command("helm", cmdArgs...)
 		fmt.Println("Executing", helmExec.String())
 
 		// Execute the command
-		err = helmExec.Run()
+		helmOutput, err := helmExec.Output()
 		if err != nil {
-			fmt.Println("Error running helm upgrade --install.", err)
+			fmt.Println("Error running helm upgrade --install.", err, "details:", helmOutput)
 			os.Exit(1)
 		}
 
@@ -314,6 +356,7 @@ func init() {
 	deployCmd.Flags().BoolVar(&skipInstall, "no-install", false, "Performs everything but the final helm upgrade --install command")
 	deployCmd.Flags().BoolVar(&cleanup, "cleanup", false, "Remove temporary folder after successful command execution")
 	deployCmd.Flags().BoolVar(&insecureNoVerify, "insecure-no-verify", false, "Do not verify server TLS certs in the Registry or Kubernetes")
+	deployCmd.Flags().BoolVar(&helmWait, "wait", false, "Pass the --wait parameter to the helm upgrade --install command")
 	deployCmd.Flags().StringVarP(&packagePath, "package", "p", "", ".kodpkg file to deploy")
 	deployCmd.Flags().StringVarP(&deploymentName, "deployment", "d", "", "Deployment name for helm")
 	deployCmd.Flags().StringVarP(&targetNamespace, "namespace", "n", "default", "Target Kubernetes Namespace")

@@ -1,3 +1,6 @@
+/*
+Copyright © 2026 Kod project Contributors
+*/
 package types
 
 /*

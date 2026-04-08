@@ -37,6 +37,7 @@ nav:
   - Developer's Guide:
       - devguide/index.md
       - Feature planning: devguide/planning.md
+      - Architecture: devguide/architecture.md
 
 plugins:
   - search
