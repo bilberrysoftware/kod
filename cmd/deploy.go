@@ -26,6 +26,7 @@ var targetNamespace = ""
 var registryUrl = ""
 var projectFolder = ""
 var valuesFiles []string
+var additionalImagePullSecrets []string
 
 // deployCmd represents the deploy command
 var deployCmd = &cobra.Command{
@@ -54,6 +55,9 @@ Then perform a helm upgrade --install on the package.`,
 		//	projectFolder = "kod/containers"
 		//}
 
+		if strings.HasSuffix(registryUrl, "/") {
+			registryUrl = registryUrl[:len(registryUrl)-1]
+		}
 		// Check that skopeo is logged in already
 		skopeoLoginExec := exec.Command("skopeo", "login", "--get-login", registryUrl)
 
@@ -175,9 +179,9 @@ Then perform a helm upgrade --install on the package.`,
 			if strings.HasPrefix(regPath, "oci://") {
 				regPath = regPath[6:]
 			}
-			if !strings.HasSuffix(regPath, "/") {
-				regPath += "/"
-			}
+			//if !strings.HasSuffix(regPath, "/") {
+			//	regPath += "/"
+			//}
 			repoPath := ""
 			if strings.HasPrefix(projectFolder, "/") {
 				repoPath += projectFolder[1:]
@@ -192,12 +196,12 @@ Then perform a helm upgrade --install on the package.`,
 			}
 			repoPath += ctr.Repository
 
-			destPath := regPath + repoPath
+			destPath := regPath + "/" + repoPath
 
 			finalPath := destPath + ":" + ctr.Tag
 
 			// find hint that matches this container image, and change accordingly
-			for hIdx, hint := range hints.Hints {
+			for hIdx, hint := range hints.Images {
 				if hint.PackagedImage.Registry == ctr.Registry &&
 					hint.PackagedImage.Tag == ctr.Tag &&
 					hint.PackagedImage.Repository == ctr.Repository {
@@ -209,7 +213,7 @@ Then perform a helm upgrade --install on the package.`,
 						hint.PackagedImage.Digest = ctr.Digest
 					}
 					// Replace value in hints
-					hints.Hints[hIdx] = hint
+					hints.Images[hIdx] = hint
 				}
 			}
 
@@ -241,7 +245,7 @@ Then perform a helm upgrade --install on the package.`,
 		// generate values file content
 		// Note: Any overrides to the values for the local container registry are done in the above code, not here
 		valuesFile := map[string]interface{}{}
-		for _, hint := range hints.Hints {
+		for _, hint := range hints.Images {
 			// Create top level structure
 			parts := strings.Split(hint.ParentPath, ".")
 			lastLevel := valuesFile
@@ -273,9 +277,50 @@ Then perform a helm upgrade --install on the package.`,
 					}
 					lastLevel[part] = content
 				} else {
-					newIface := map[string]interface{}{}
-					lastLevel[part] = newIface
-					lastLevel = newIface
+					// Otherwise if we have two containers under the same registry, we only declare one image!
+					if nil == lastLevel[part] {
+						newIface := map[string]interface{}{}
+						lastLevel[part] = newIface
+						//lastLevel = newIface
+					}
+					lastLevel = lastLevel[part].(map[string]interface{})
+				}
+			}
+		}
+		// Now pass in imagePullSecrets overrides
+		if "" != hints.ImagePullSecrets.SecretArrayPath {
+			fmt.Println("DEBUG: Got additional secrets:", additionalImagePullSecrets)
+			fmt.Println("DEBUG: path:", hints.ImagePullSecrets.SecretArrayPath)
+			parts := strings.Split(hints.ImagePullSecrets.SecretArrayPath, ".")
+			lastLevel := valuesFile
+			for pIdx, part := range parts {
+				fmt.Println("DEBUG: loop idx", pIdx, "part", part)
+				if pIdx == len(parts)-1 {
+					// Write contents below this
+					var content []types.SecretReference
+					var secretArray []types.SecretReference
+					for _, value := range hints.ImagePullSecrets.PackagedSecrets {
+						secretArray = append(secretArray, value)
+					}
+					for _, value := range additionalImagePullSecrets {
+						secretArray = append(secretArray, types.SecretReference{
+							Name: value,
+						})
+					}
+					fmt.Println("DEBUG: secret array", secretArray)
+					for _, secret := range secretArray {
+						content = append(content, secret)
+					}
+					lastLevel[part] = content
+					fmt.Println("DEBUG: last level final content", content, "for part", part)
+				} else {
+					// Note sure this is needed currently, as we don't loop, but just in case I'll leave it here
+					if nil == lastLevel[part] {
+						newIface := map[string]interface{}{}
+						lastLevel[part] = newIface
+					}
+					lastLevel = lastLevel[part].(map[string]interface{})
+					fmt.Println("DEBUG: intermediate level", part)
 				}
 			}
 		}
@@ -299,8 +344,8 @@ Then perform a helm upgrade --install on the package.`,
 				fmt.Println("Cleaning up temporary folder", tmpFolder)
 				err = os.RemoveAll(tmpFolder)
 				if err != nil {
-					fmt.Println("Error deleting temporary folder for deployment. Folder:", tmpFolder, "Error:", err)
-					os.Exit(1)
+					fmt.Println("WARNING: Error deleting temporary folder for deployment. Folder:", tmpFolder, "Error:", err)
+					//os.Exit(1)
 				}
 			}
 			fmt.Println("Done.")
@@ -326,7 +371,7 @@ Then perform a helm upgrade --install on the package.`,
 		// Execute the command
 		helmOutput, err := helmExec.Output()
 		if err != nil {
-			fmt.Println("Error running helm upgrade --install.", err, "details:", helmOutput)
+			fmt.Println("Error running helm upgrade --install.", err, "details:", string(helmOutput))
 			os.Exit(1)
 		}
 
@@ -334,8 +379,8 @@ Then perform a helm upgrade --install on the package.`,
 			fmt.Println("Cleaning up temporary folder", tmpFolder)
 			err = os.RemoveAll(tmpFolder)
 			if err != nil {
-				fmt.Println("Error deleting temporary folder for deployment. Folder:", tmpFolder, "Error:", err)
-				os.Exit(1)
+				fmt.Println("WARNING: Error deleting temporary folder for deployment. Folder:", tmpFolder, "Error:", err)
+				//os.Exit(1)
 			}
 		}
 		fmt.Println("Done.")
@@ -362,7 +407,8 @@ func init() {
 	deployCmd.Flags().StringVarP(&targetNamespace, "namespace", "n", "default", "Target Kubernetes Namespace")
 	deployCmd.Flags().StringVarP(&registryUrl, "registry", "r", "", "The base URL for the container registry to use")
 	deployCmd.Flags().StringVarP(&projectFolder, "project", "j", "kod/containers", "The project path within the container registry to use as the base folder")
-	valuesFiles = *deployCmd.Flags().StringArrayP("values", "f", []string{}, "The helm values file(s) to use to customise a deployment")
+	deployCmd.Flags().StringArrayVarP(&valuesFiles, "values", "f", []string{}, "The helm values file(s) to use to customise a deployment")
+	deployCmd.Flags().StringArrayVarP(&additionalImagePullSecrets, "imagePullSecrets", "s", []string{}, "Any additional imagePullSecrets in the target namespace to use")
 
 	// TODO oci/helm artifact project path of -a (defaults to kod/charts
 	// TODO oci registry URL --oci (defaults to same as registryUrl)

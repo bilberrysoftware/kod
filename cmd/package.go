@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/mholt/archives"
@@ -364,88 +365,64 @@ and all of its constituent container images.`,
 				Name:    chartDef.Name,
 				Version: chartDef.Version,
 			},
-			Hints: []types.ContainerImageHint{},
+			Images: []types.ContainerImageHint{},
 		}
 
 		// Now look for various common image config locations
-		vImageEl := valuesMap["image"] // TODO change this to be more dynamic in future versions
+		// Option 1. Helm create default single container values.yaml elements
+		vImageEl := valuesMap["image"]
 		if vImageEl != nil {
 			vImage := vImageEl.(map[string]interface{})
-			hint := types.ContainerImageHint{
-				ParentPath: "image", // TODO change this to be more dynamic in future versions
-				//RegistryPath:   vImageRegistryStr,
-				//TagPath:        vImageTagStr,
-				//DigestPath:     vImageDigestStr,
-				//PackagedImage:  ctrObj,
+			err = internal.FindContainerImagesByImageChildValues(chartDef, "image", &vImage, &containers, &hints)
+			if err != nil {
+				fmt.Println("Error finding image child elements in values.yaml", err)
+				os.Exit(1)
 			}
-			// check for 'registry' first
-			vImageRegistry := vImage["registry"]
-			vImageRepository := vImage["repository"].(string)
-			vImageRegistryStr := ""
-			// TODO trim strings of whitespace
-			if vImageRepository != "" {
-				hint.RepositoryPath = "repository" // TODO change this to be more dynamic in future versions
+		}
+		// End Option 1.
 
-				vImageDigest := vImage["digest"]
-				vImageDigestStr := ""
-				if vImageDigest == nil {
-					// take the last part from repository after the @, if specified, otherwise leave as ""
-					idx := strings.LastIndex(vImageRepository, "@")
-					if idx != -1 {
-						vImageRepository = vImageRepository[:idx]
-						vImageDigestStr = vImageRepository[idx+1:]
-						hint.DigestPath = "repository.@"
-					}
-				} else {
-					vImageDigestStr = vImageDigest.(string)
-					hint.DigestPath = "digest"
-				}
-				if vImageRegistry == nil {
-					// Get Registry from the first part of repository if it looks like a URL, OR default to docker.io
-					idx := strings.Index(vImageRepository, "/")
-					if idx != -1 {
-						vImageRegistryStr = vImageRepository[:idx]
-						vImageRepository = vImageRepository[idx+1:]
-						hint.RegistryPath = "repository./"
-					}
-				} else {
-					vImageRegistryStr = vImageRegistry.(string)
-					hint.RegistryPath = "registry"
-				}
-				vImageTag := vImage["tag"]
-				vImageTagStr := ""
-				if vImageTag == nil {
-					// Get Tag from the last part of the repository (now that we've removed digest
-					idx := strings.LastIndex(vImageRepository, ":")
-					if idx != -1 {
-						vImageTagStr = vImageRepository[:idx]
-						vImageRepository = vImageRepository[idx+1:]
-						hint.TagPath = "repository.:"
-					}
-				} else {
-					vImageTagStr = vImageTag.(string)
-					hint.TagPath = "tag"
-				}
-				// Last catch all for tag
-				if vImageTagStr == "" {
-					fmt.Println("WARNING: no version tag found for container. Defaulting to 'Chart.appVersion' for", vImageRepository)
-					//vImageTagStr = "latest"
-					// default to Chart.AppVersion when this is blank in the values file
-					vImageTagStr = chartDef.AppVersion
-					// TODO Consider specifying a target version of "sha256-SHAVALUE" when this happens, to avoid CIS Benchmark issues on deployment
-				}
-				fmt.Println(fmt.Sprintf("- Found container image: '%s/%s:%s@%s'", vImageRegistryStr, vImageRepository, vImageTagStr, vImageDigestStr))
-				ctrObj := types.ContainerImage{
-					Registry:   vImageRegistryStr,
-					Repository: vImageRepository,
-					Tag:        vImageTagStr,
-					Digest:     vImageDigestStr,
-				}
-				containers = append(containers, ctrObj)
-				// Save the value mappings of this information so we can override the correct parameters on deployment of the package
+		// Option 2. Underneath any element in values.yaml with a parent called .*[iI]mage:
+		err = internal.FindContainerImagesByImageTagSearch(chartDef, "", &valuesMap, &containers, &hints)
+		if err != nil {
+			fmt.Println("Error finding container images by depth first values.yaml search", err)
+			os.Exit(1)
+		}
+		// End Option 2.
 
-				hint.PackagedImage = ctrObj
-				hints.Hints = append(hints.Hints, hint)
+		// Now search for ImagePullSecrets
+		fmt.Println("Searching for imagePullSecrets...")
+		globalEl := valuesMap["global"]
+		if globalEl != nil {
+			// TODO ensure type is map before case
+			global := globalEl.(map[string]interface{})
+			ipsEl := global["imagePullSecrets"]
+			if ipsEl != nil {
+				// This is if it has a value specified. It will be an empty interface{} if blank (which is the norm)
+				if reflect.TypeOf(ipsEl) == reflect.TypeOf([]string{}) {
+					ips := ipsEl.([]string)
+					for _, secretRef := range ips {
+						hints.ImagePullSecrets.PackagedSecrets = append(hints.ImagePullSecrets.PackagedSecrets, types.SecretReference{Name: secretRef})
+					}
+					//} else {
+					//	hints.ImagePullSecrets.PackagedSecrets = []string{}
+				}
+				hints.ImagePullSecrets.SecretArrayPath = "global.imagePullSecrets"
+			}
+		} else {
+			hints.ImagePullSecrets.PackagedSecrets = []types.SecretReference{}
+			ipsEl := valuesMap["imagePullSecrets"]
+			if ipsEl != nil {
+				if reflect.TypeOf(ipsEl) == reflect.TypeOf([]string{}) {
+					ips := ipsEl.([]string)
+					for _, secretRef := range ips {
+						hints.ImagePullSecrets.PackagedSecrets = append(hints.ImagePullSecrets.PackagedSecrets, types.SecretReference{Name: secretRef})
+					}
+
+					//} else {
+					//	nameMap := map[string]interface{}{}
+					//	hints.ImagePullSecrets.PackagedSecrets = []string{}
+				}
+				hints.ImagePullSecrets.SecretArrayPath = "imagePullSecrets"
 			}
 		}
 
@@ -482,6 +459,9 @@ and all of its constituent container images.`,
 			}
 		}
 
+		// TODO ensure we only mention each container image once in containers
+		// Some things like Kafka, kube-prometheus-stack use the same container image with different runtime settings, and refer to it multiple times in the same chart
+
 		// Copy container images using Skopeo, unless they already exist
 		fmt.Println("Fetching any container images required...")
 		// TODO Check somehow whether it's a DockerV2 or OCI image repo, and run the appropriate command for this
@@ -506,8 +486,13 @@ and all of its constituent container images.`,
 				}
 
 				// try to inspect the container image now to list available tags
+				// WARNING: Not specifying a version actually looks for a 'latest' tag, you MUST specify a version if known
 				imagePath := "docker://" + ctr.Registry + "/" + ctr.Repository
+				if ctr.Tag != "" {
+					imagePath += ":" + ctr.Tag
+				}
 				skopeoInspectExec := exec.Command("skopeo", "inspect", imagePath)
+				fmt.Println("Executing", skopeoInspectExec.String())
 				var skopeoInspectOutput internal.SaveOutput
 				skopeoInspectOutput.NoEchoToStdOut = true
 				skopeoInspectExec.Stdin = os.Stdin
@@ -583,6 +568,7 @@ and all of its constituent container images.`,
 		err = os.WriteFile(packageFilePath, pkgBytes, os.ModePerm)
 		fmt.Println("Written package definition to temporary file", packageFilePath)
 
+		fmt.Println("Creating final package archive (.kodpkg) ...")
 		// Now package the temp folder as a tar.xz but with the kodpkg extension
 		files, err := archives.FilesFromDisk(context.Background(), nil, map[string]string{
 			tempPath: folderName,

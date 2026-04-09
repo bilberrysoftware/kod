@@ -44,10 +44,23 @@ type HelmChartReference struct {
 	Version string `yaml:"version"`
 }
 
+type SecretReference struct {
+	Name string `yaml:"name"`
+}
+
+/*
+ * Represents a pointer to an image pull secrets path
+ */
+type SecretHint struct {
+	SecretArrayPath string            `yaml:"secretArrayPath"`
+	PackagedSecrets []SecretReference `yaml:"packagedSecrets"`
+}
+
 /**
  * Acts as the top level of the CHARTNAME-CHARTVER-hints.yaml file
  */
 type HintsFile struct {
-	ChartRef HelmChartReference   `yaml:"chartRef"`
-	Hints    []ContainerImageHint `yaml:"hints,omitempty"`
+	ChartRef         HelmChartReference   `yaml:"chartRef"`
+	ImagePullSecrets SecretHint           `yaml:"imagePullSecrets,omitempty"`
+	Images           []ContainerImageHint `yaml:"images,omitempty"`
 }
