@@ -8,12 +8,18 @@ for more suggestions.
 
 ## Packaging from a cloned Helm Chart repo
 
-This example shows how to clond a Git repo containing a helm chart folder, and using that to create
+This example shows how to clone a Git repo containing a helm chart folder, and using that to create
 a cod package. We use Bitnami's repository and their Redis chart as an example, as it's small.
 
 ```shell
 git clone https://github.com/bitnami/charts.git
 kod package -c charts/bitnami/redis
+```
+
+## Package a chart directly from an OCI registry
+
+```shell
+kod package -r oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack
 ```
 
 ## Your Example Here!

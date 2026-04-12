@@ -37,7 +37,7 @@ func FindContainerImagesByImageChildValues(chartDef types.HelmChart, parentPath 
 				// take the last part from repository after the @, if specified, otherwise leave as ""
 				idx := strings.LastIndex(vImageRepositoryStr, "@")
 				if idx != -1 {
-					vImageRepository = vImageRepositoryStr[:idx]
+					vImageRepositoryStr = vImageRepositoryStr[:idx]
 					vImageDigestStr = vImageRepositoryStr[idx+1:]
 					hint.DigestPath = "repository.@"
 				}
@@ -50,7 +50,7 @@ func FindContainerImagesByImageChildValues(chartDef types.HelmChart, parentPath 
 				idx := strings.Index(vImageRepositoryStr, "/")
 				if idx != -1 {
 					vImageRegistryStr = vImageRepositoryStr[:idx]
-					vImageRepository = vImageRepositoryStr[idx+1:]
+					vImageRepositoryStr = vImageRepositoryStr[idx+1:]
 					hint.RegistryPath = "repository./"
 				}
 			} else {
@@ -73,7 +73,7 @@ func FindContainerImagesByImageChildValues(chartDef types.HelmChart, parentPath 
 			}
 			// Last catch all for tag
 			if vImageTagStr == "" {
-				fmt.Println("WARNING: no version tag found for container. Defaulting to 'Chart.appVersion' for", vImageRepository)
+				fmt.Println("WARNING: no version tag found for container. Defaulting to 'Chart.appVersion' for", vImageRepositoryStr)
 				//vImageTagStr = "latest"
 				// default to Chart.AppVersion when this is blank in the values file
 				vImageTagStr = chartDef.AppVersion

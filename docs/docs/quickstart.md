@@ -21,9 +21,12 @@ This tutorial shows you how to package the Bitnami CloudNative Postgres chart fo
 Now let's quickly package the Bitnami CloudNative Postgres chart and move this to a private registry.
 
 ```shell
-git clone https://github.com/bitnami/charts.git
-kod package -c ../other-charts/cloudnative-pg
+wget https://github.com/cloudnative-pg/charts/releases/download/cloudnative-pg-v0.28.0/cloudnative-pg-0.28.0.tgz
+tar xzf cloudnative-pg-0.28.0.tgz
+kod package -c ./cloudnative-pg
 ```
+
+Note: The https fetching of a helm chart is currently under development
 
 Note: Online fetching of Helm charts from `oci://` URLs, or local `helm pull` `.tgz` files, or Artifactory URLs 
 will be supported in future too.

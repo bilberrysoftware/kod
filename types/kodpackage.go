@@ -61,6 +61,19 @@ type SecretHint struct {
  */
 type HintsFile struct {
 	ChartRef         HelmChartReference   `yaml:"chartRef"`
-	ImagePullSecrets SecretHint           `yaml:"imagePullSecrets,omitempty"`
+	ImagePullSecrets []SecretHint         `yaml:"imagePullSecrets,omitempty"`
 	Images           []ContainerImageHint `yaml:"images,omitempty"`
+}
+
+/*
+ * Used to represent the results from recursive HelmChart packaging
+ */
+type HelmChartProcessingResult struct {
+	HintsFile  HintsFile                   `yaml:"hintsFile"`
+	Containers []ContainerImage            `yaml:"containers"`
+	Children   []HelmChartProcessingResult `yaml:"children"`
+}
+
+type ContainerImageList struct {
+	Containers []ContainerImage `yaml:"containers"`
 }

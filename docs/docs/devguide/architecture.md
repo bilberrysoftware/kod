@@ -98,6 +98,8 @@ a helm flag (like `-f` to point to one or more custom values files) then we adop
 
 ## OCI and Zot
 
+Note: OCI format and registry support is COMING SOON IN v0.6.0 for container images and other deployment assets.
+
 The OCI packaging format is moving beyond wrapping container images, and to describing generic deployable artifacts.
 The Zot registry is building built from the ground up to support the OCI format. We've been really happy
 watching how Zot has matured over the past 3 years and have used it in anger on a number of Edge and airgapped
@@ -108,6 +110,9 @@ distribution, but we also allow the fetching helm charts via OCI URLs in the pac
 modify the deploy command to push the helm charts themselves and kodpkg or kodinfo files as artifacts too.
 That will effectively mean after the first deploy or populate command of a kodpackage, you should be able to
 execute kod against the OCI registry with no local files stored on disc at all.
+
+We use `regctl` to interact with OCI registries and `skopeo` for dockerv2 registries. We'll generally try
+to fetch via OCI first, if available. See the [regclient website](https://regclient.org/) for details on regctl.  
 
 ### If you need an online container registry are you really an offline deployment tool?
 
