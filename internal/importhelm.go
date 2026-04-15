@@ -111,12 +111,23 @@ func ProcessChartFolder(rootPackageFolder string, isRootPackage bool, chartFolde
 	// End Option 1.
 
 	// Option 2. Underneath any element in values.yaml with a parent called .*[iI]mage:
+	fmt.Println("Searching for any element named '.*[iI]mage'...")
 	err = FindContainerImagesByImageTagSearch(chartDef, "", &valuesMap, &resultToPopulate.Containers, &hints)
 	if err != nil {
 		fmt.Println("Error finding container images by depth first values.yaml search", err)
 		os.Exit(1)
 	}
 	// End Option 2.
+
+	// Option 3. Try a global imageRegistry and imageNamespace, and a local COMPONENT.image.name
+	// This matches cert-manager
+	fmt.Println("Searching for top level imageRegistry and imageRepository|imageNamespace...")
+	err = FindContainerImagesByGlobalRegistryAndComponentName(chartDef, "", &valuesMap, &resultToPopulate.Containers, &hints)
+	if err != nil {
+		fmt.Println("Error finding container images by global imageRegistry and component image.name", err)
+		os.Exit(1)
+	}
+	// End Option 3.
 
 	// Now search for ImagePullSecrets
 	fmt.Println("Searching for imagePullSecrets...")

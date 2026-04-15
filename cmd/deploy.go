@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -21,6 +22,7 @@ var skipInstall = false
 var cleanup = false
 var insecureNoVerify = false
 var helmWait = false
+var createSecret = false
 var deploymentName = ""
 var targetNamespace = ""
 var registryUrl = ""
@@ -285,17 +287,18 @@ Examples:
 		//	os.Exit(1)
 		//}
 
-		fmt.Println("Container map:-")
-		for ctrTag, ctrPath := range containerFileMap {
-			fmt.Println(ctrTag, "=", ctrPath)
-		}
-		fmt.Println("Container fallback:-")
-		for ctrRepo, fallbackVersion := range fallbackTagPaths {
-			fmt.Println(ctrRepo, "=", fallbackVersion)
-		}
+		// TODO output the below to DEBUG log routinely
+		//fmt.Println("Container map:-")
+		//for ctrTag, ctrPath := range containerFileMap {
+		//	fmt.Println(ctrTag, "=", ctrPath)
+		//}
+		//fmt.Println("Container fallback:-")
+		//for ctrRepo, fallbackVersion := range fallbackTagPaths {
+		//	fmt.Println(ctrRepo, "=", fallbackVersion)
+		//}
 
-		// TODO do the below for ALL charts, not just the main one, so container refs are correct
-		// TODO do we need to do this in the main chart only, with values pointing to lower charts?
+		// DONE do the below for ALL charts, not just the main one, so container refs are correct
+		// DONE do we need to do this in the main chart only, with values pointing to lower charts?
 		//  - YES. See https://helm.sh/docs/chart_template_guide/subcharts_and_globals/#overriding-values-from-a-parent-chart
 
 		// Generate charts/CHARTNAME-CHARTVER-values.yaml file from hints file and any -f inputs
@@ -310,28 +313,66 @@ Examples:
 				if pIdx == len(parts)-1 {
 					// Write contents below this
 					content := map[string]string{}
-					content[hint.RepositoryPath] = hint.PackagedImage.Repository
-					//pathPrefix := ""
-					//if hint.ParentPath != "" {
-					//	pathPrefix = hint.ParentPath + "."
-					//}
-					// Parse out any refs that might be within another values element
-					if hint.RegistryPath == hint.RepositoryPath+"./" {
-						if strings.HasSuffix(hint.PackagedImage.Registry, "/") {
-							content[hint.RepositoryPath] = hint.PackagedImage.Registry + content[hint.RepositoryPath]
+
+					// Option 3 for container image tag locations
+					// Note: Option 3 currently only generates references below the root element.
+					//       If it didn't, we'd have to check for and add in ParentPath != "" below too
+					slashIdx := strings.LastIndex(hint.RepositoryPath, "/")
+					absolutePaths := slashIdx != -1
+					if absolutePaths {
+						nsPath := hint.RepositoryPath[:slashIdx]
+						namePath := hint.RepositoryPath[slashIdx+1:]
+						nsValue := ""
+						nameValue := hint.PackagedImage.Repository
+						actualSlashIdx := strings.LastIndex(hint.PackagedImage.Repository, "/")
+						if actualSlashIdx != -1 {
+							nsValue = hint.PackagedImage.Repository[:actualSlashIdx]
+							nameValue = hint.PackagedImage.Repository[actualSlashIdx+1:]
+						}
+						//content[nsPath] = nsValue
+						//content[namePath] = nameValue
+
+						// get parentPath underneath valuesFile
+						// get relative values from there for all elements
+						// set as appropriate in values
+						internal.SetRelativeMapValue(&valuesFile, hint.ParentPath, hint.RegistryPath, hint.PackagedImage.Registry)
+						internal.SetRelativeMapValue(&valuesFile, hint.ParentPath, nsPath, nsValue)
+						internal.SetRelativeMapValue(&valuesFile, hint.ParentPath, namePath, nameValue)
+					} else {
+						// Options 1 & 2 for container image tag locations
+						content[hint.RepositoryPath] = hint.PackagedImage.Repository
+						//pathPrefix := ""
+						//if hint.ParentPath != "" {
+						//	pathPrefix = hint.ParentPath + "."
+						//}
+
+						// Parse out any refs that might be within another values element
+						if hint.RegistryPath == hint.RepositoryPath+"./" {
+							if strings.HasSuffix(hint.PackagedImage.Registry, "/") {
+								content[hint.RepositoryPath] = hint.PackagedImage.Registry + content[hint.RepositoryPath]
+							} else {
+								content[hint.RepositoryPath] = hint.PackagedImage.Registry + "/" + content[hint.RepositoryPath]
+							}
 						} else {
-							content[hint.RepositoryPath] = hint.PackagedImage.Registry + "/" + content[hint.RepositoryPath]
+							content[hint.RegistryPath] = hint.PackagedImage.Registry
 						}
-					} else {
-						content[hint.RegistryPath] = hint.PackagedImage.Registry
-					}
-					if hint.TagPath == hint.RepositoryPath+".:" {
-						// prevent both :tag@digest in final URL, preferring @digest only
-						if hint.DigestPath != hint.RepositoryPath+".@" {
-							content[hint.RepositoryPath] = content[hint.RepositoryPath] + ":" + hint.PackagedImage.Tag
+						if hint.TagPath == hint.RepositoryPath+".:" {
+							// prevent both :tag@digest in final URL, preferring @digest only
+							if hint.DigestPath != hint.RepositoryPath+".@" {
+								content[hint.RepositoryPath] = content[hint.RepositoryPath] + ":" + hint.PackagedImage.Tag
+							}
+						} else {
+							content[hint.TagPath] = hint.PackagedImage.Tag
 						}
-					} else {
-						content[hint.TagPath] = hint.PackagedImage.Tag
+
+						// (Note: This usually happens because the value in the helm chart is wrong, or doesn't exist)
+						if hint.DigestPath != "" {
+							if hint.DigestPath == hint.RepositoryPath+".@" {
+								content[hint.RepositoryPath] = content[hint.RepositoryPath] + "@" + hint.PackagedImage.Digest
+							} else {
+								content[hint.DigestPath] = hint.PackagedImage.Digest
+							}
+						}
 					}
 
 					//if -1 != strings.Index(hint.PackagedImage.Repository, "kube-state-metrics") {
@@ -340,19 +381,22 @@ Examples:
 					//	fmt.Println(" - content reg:", content[hint.RegistryPath], "rep:", content[hint.RepositoryPath], "tag:", content[hint.TagPath])
 					//}
 
+					// determine the tag and digest ACTUAL values separately from setting in the content
+					finalVersion := hint.PackagedImage.Tag
+
 					// ensure container at TagPath exists, and if not, fallback to version in main kod-package.yaml file
-					//ctrId := content[hint.RegistryPath] + "/" + content[hint.RepositoryPath]
-					ctrId := hint.PackagedImage.Registry + "/" + hint.PackagedImage.Repository
-					//ctrTarFile := containerFileMap[ctrId+":"+content[hint.TagPath]]
+					ctrId := hint.PackagedImage.Registry + "/" + hint.PackagedImage.Repository // for option 3, we create the full repo name on package not deploy
 					ctrTarFile := containerFileMap[ctrId+":"+hint.PackagedImage.Tag]
 					if ctrTarFile == "" {
 						fmt.Println(fmt.Sprintf("WARNING: Version '%s' in helm chart for container '%s' isn't available in archive. Attempting fallback version", hint.PackagedImage.Tag, ctrId))
 						fallback := fallbackTagPaths[ctrId]
 						if fallback == "" {
 							fmt.Println(" - WARNING: No valid fallback tag value detected for container:", ctrId)
+							// Note: We leave this as the originally specified tag, even if digest is specified, as we presume the logic of the chart author is sound if both exist
+							//       (This actually causes an issue with some charts which don't have sound logic and include both)
 						} else {
 							fmt.Println(" - Found valid fallback tag:", fallback)
-							content[hint.TagPath] = fallback
+							finalVersion = fallback
 						}
 					}
 					//if -1 != strings.Index(hint.PackagedImage.Repository, "kube-state-metrics") {
@@ -360,15 +404,18 @@ Examples:
 					//	//os.Exit(1)
 					//}
 
-					// (Note: This usually happens because the value in the helm chart is wrong, or doesn't exist)
-					if hint.DigestPath != "" {
-						if hint.DigestPath == hint.RepositoryPath+".@" {
-							content[hint.RepositoryPath] = content[hint.RepositoryPath] + "@" + hint.PackagedImage.Digest
-						} else {
-							content[hint.DigestPath] = hint.PackagedImage.Digest
+					if absolutePaths {
+						if hint.TagPath != "" {
+							internal.SetRelativeMapValue(&valuesFile, hint.ParentPath, hint.TagPath, finalVersion)
 						}
+						if hint.DigestPath != "" {
+							internal.SetRelativeMapValue(&valuesFile, hint.ParentPath, hint.DigestPath, hint.PackagedImage.Digest)
+						}
+					} else {
+						content[hint.TagPath] = finalVersion
+
+						lastLevel[part] = content
 					}
-					lastLevel[part] = content
 				} else {
 					// Otherwise if we have two containers under the same registry, we only declare one image!
 					if nil == lastLevel[part] {
@@ -450,34 +497,67 @@ Examples:
 			os.Exit(0)
 		}
 
+		var wg sync.WaitGroup
+		// TASK 1
 		// perform actual helm install
 		fmt.Println("Executing helm...")
-		chartPath := filepath.Join(tmpFolder, "charts", kodPackage.Name+"-"+kodPackage.Version)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			chartPath := filepath.Join(tmpFolder, "charts", kodPackage.Name+"-"+kodPackage.Version)
 
-		cmdArgs := []string{"upgrade", "--install", deploymentName, chartPath, "-n", targetNamespace, "--create-namespace", "-f", valuesPath}
-		// Include -f values file overrides from command line appended too after our values file
-		for _, vf := range valuesFiles {
-			cmdArgs = append(cmdArgs, "-f")
-			cmdArgs = append(cmdArgs, vf)
-		}
-		if helmWait {
-			cmdArgs = append(cmdArgs, "--wait")
-		}
-		helmExec := exec.Command("helm", cmdArgs...)
-		fmt.Println("Executing", helmExec.String())
-		var helmOutput internal.SaveOutput
-		helmOutput.Prefix = "  \xF0\x9F\x8C\x90 "
-		helmExec.Stdin = os.Stdin
-		helmExec.Stdout = &helmOutput
-		helmExec.Stderr = os.Stderr
+			cmdArgs := []string{"upgrade", "--install", deploymentName, chartPath, "-n", targetNamespace, "--create-namespace", "-f", valuesPath}
+			// Include -f values file overrides from command line appended too after our values file
+			for _, vf := range valuesFiles {
+				cmdArgs = append(cmdArgs, "-f")
+				cmdArgs = append(cmdArgs, vf)
+			}
+			if helmWait {
+				cmdArgs = append(cmdArgs, "--wait")
+			}
+			helmExec := exec.Command("helm", cmdArgs...)
+			fmt.Println("Executing", helmExec.String())
+			var helmOutput internal.SaveOutput
+			helmOutput.Prefix = "  \xF0\x9F\x8C\x90 "
+			helmExec.Stdin = os.Stdin
+			helmExec.Stdout = &helmOutput
+			helmExec.Stderr = os.Stderr
 
-		// Execute the command
-		err = helmExec.Run()
-		// Execute the command
-		if err != nil {
-			fmt.Println("Error running helm upgrade --install.", err, "details:", helmOutput.String())
-			os.Exit(1)
+			// Execute the command
+			err = helmExec.Run()
+			// Execute the command
+			if err != nil {
+				fmt.Println("Error running helm upgrade --install.", err, "details:", helmOutput.String())
+				os.Exit(1)
+			}
+		}()
+
+		// TASK 2
+		if createSecret {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if 0 == len(additionalImagePullSecrets) {
+					fmt.Println("WARNING: Skipping secret creation as no -s secret option was provided as the name")
+				} else {
+					// Wait for namespace to exist
+					exists, err := internal.WaitForNamespaceToExist(targetNamespace, 5, 12)
+					if err != nil {
+						fmt.Println("WARNING: Error checking if namespace exists. Assuming it exists anyway...")
+					}
+					if !exists {
+						fmt.Println("WARNING: Timeout exceeded waiting for namespace to exist (60 seconds). Secret creation may fail. Namespace:", targetNamespace)
+					}
+					err = internal.CreateSecretFromDockerJsonInHomeLocation(targetNamespace, additionalImagePullSecrets[0])
+					if err != nil {
+						fmt.Println("Error creating secret from Docker logged in Json secret in home location:", err)
+						os.Exit(1)
+					}
+				}
+			}()
 		}
+
+		wg.Wait()
 
 		if cleanup {
 			fmt.Println("Cleaning up temporary folder", tmpFolder)
@@ -506,6 +586,7 @@ func init() {
 	deployCmd.Flags().BoolVar(&cleanup, "cleanup", false, "Remove temporary folder after successful command execution")
 	deployCmd.Flags().BoolVar(&insecureNoVerify, "insecure-no-verify", false, "Do not verify server TLS certs in the Registry or Kubernetes")
 	deployCmd.Flags().BoolVar(&helmWait, "wait", false, "Pass the --wait parameter to the helm upgrade --install command")
+	deployCmd.Flags().BoolVar(&createSecret, "create-secret", false, "Create the registry secret from the docker logged in info. Uses the first secret named in the -s option as the name.")
 	deployCmd.Flags().StringVarP(&packagePath, "package", "p", "", ".kodpkg file to deploy")
 	deployCmd.Flags().StringVarP(&deploymentName, "deployment", "d", "", "Deployment name for helm")
 	deployCmd.Flags().StringVarP(&targetNamespace, "namespace", "n", "default", "Target Kubernetes Namespace")

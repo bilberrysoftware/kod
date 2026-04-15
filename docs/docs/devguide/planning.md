@@ -50,14 +50,18 @@ first.
           - They're all sub chart dependencies!
   - [ ] Further image detection improvements
     - [ ] Another convention is global.imageRegistry (2 of top ten) (Will override other registry refs)
+    - [X] Add support for cert-manager imageRegistry and imageNamespace and COMPONENT/image.name
+      - Has old and new way. New way is imageRegistry/imageNamespace/{component}:image.name:{image.digest (NOT DEFINED IN VALUES.YAML) OR image.tag (NOT DEFINED IN VALUES.YAML) OR Chart.AppVersion}
+      - [X] Package working
+      - [X] Deploy working (Looks for ^ in hint to separate parts of Repository out among two global fields)
+        - [X] Ensure subelement search does process multiple element values (i.e. firstlevel.secondlevel.valuefield)
     - [X] Search entire tree for '.*\[iI\]mage' and sub elements (4 of top ten)
       - ArgoCD, kube-prometheus-stack
     - [ ] Allow specification of container images, and links to config elements, for things we cannot guess - kod-hints.yaml
-      - Note: include this as kod-hints.yaml in the output archive too
-    - [ ] Add flat elements without image parent. E.g. imageRegistry and imageRepository and imageNamespace
-      - cert-manager
+      - Note: include this as CHART-CHARTVER-hints-00x.yaml in the output archive too
     - [ ] Consider reading images required from the deployment YAML templates (helm template), and reverse parse their parameters (Complex)
       - If it works, we should be able to support any helm chart OOTB without a hints file
+    - [ ] Consider reading images required from a commented values file (so it can be used in package -f with no additional hints file specific to kod)
   - [?] Add subchart support
     - [X] Separate chart packaging into its own function 
     - [X] Read dependency chart information
@@ -69,9 +73,22 @@ first.
     - [X] Call chart packaging function recursively
     - [X] Verify all charts and containers are downloaded, if it's possible to detect them
       - [X] BUG package command is not fully populating any found containers from sub charts
-    - [?] Ensure we check to see if the same chart has already been downloaded
-      - [?] BUG: If oci helm chart unpack temporary folder exists, instead of not downloading and just processing the folder, it tries to redownload and fails
-      - [ ] Ensure subsequent runs of package without removing temporary files always runs, and doesn't break hints files or other metadata files
+    - [ ] Ensure we check to see if the same chart has already been downloaded
+      - [X] BUG: If oci helm chart unpack temporary folder exists, instead of not downloading and just processing the folder, it tries to redownload and fails
+        - Still errors:-
+          - go run main.go package -r oci://ghcr.io/konpyutaika/helm-charts -c nifikop
+            Using chart registry: oci://ghcr.io/konpyutaika/helm-charts
+            WARNING: You are using an OCI Registry (-r) URL with a chart path (-c). Normally, you just use the full OCI URL with the -r option. We've rewritten your OCI URL to: oci://ghcr.io/konpyutaika/helm-charts/nifikop
+            Executing /usr/sbin/helm pull oci://ghcr.io/konpyutaika/helm-charts/nifikop --untar --untardir /tmp/kod-package-c182428c8065d47728e8a5736dc5d5b5ddd207d660d2bc194bd6a81a5154ef58
+            Error executing OCI helm pull: exit status 1 details: []
+            exit status 1
+      - [X] BUG: Package of cert-manager fails - double download folder cert-manager/cert-manager
+        - go run main.go package -r https://charts.jetstack.io -c cert-manager
+        - Was prefixing cert-manager twice. Moved to same logic as OCI repos
+      - [ ] Need to verify nifikop deploy once cert-manager is installed (requires Issuer CRD)
+        - go run main.go package -r oci://ghcr.io/konpyutaika/helm-charts -c nifikop (Works first time)
+        - go run main.go deploy -p /tmp/kod-nifikop-1.17.0.kodpkg -s zot -d nifi -r https://auburnwinter.tail0972b.ts.net:8080
+      - [X] Ensure subsequent runs of package without removing temporary files always runs, and doesn't break hints files or other metadata files
         - Still errors:
           -  go run main.go package -r oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack
              Using chart registry: oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack
@@ -117,6 +134,7 @@ first.
       - ABANDONED - absolutely eats CPU cycles. This is referenced in tar file handling in the repo. May be better to use tar xf when simply unpacking
         - [X] DONE Consider using raw `tar xf FILENAME` to unpack... See if we can get a progress output too.
     - [X] Add equivalent to Archiving of the final kodpkg file
+  - [ ] Check if we should be using alias or name for subchart folder name processing (and sub values mapping) - See cloudnative-pg chart dependencies
   - [ ] Improve container version detection by checking `inspect` output RepoTags list for the version, or latest, or first listed (most recent) version before executing `skopeo copy`
 - [X] BUG: Output of long commands with \n in them such as helm upgrade --install doesn't prepend emoji on every line
 - [ ] Allow packaging with -f option to override default values, especially image paths to a local container registry
@@ -127,11 +145,18 @@ first.
     - This is particularly useful for providing default, well known, configuration to data layer helm charts (Kafka, Nifi, elasticsearch, MongoDB et al)
     - Kept as separate files to aid in debugging and security verification of kod
   - [ ] Update deploy to use these values files
+  - [ ] Test with cert-manager as it needs crds.enabled=true for the startupapicheck to work on helm install
 - [ ] Improve error handling and logging
   - [ ] Add in debug logging support alongside STDOUT info for humans
+- [X] Add deploy --create-secret to populate the imagePullSecret in the relevant namespace (if skopeo logged in, create from the ~/.docker/config.json)
+  - [X] create this in parallel with the helm deploy, so that the user doesn't have to create the namespace manually before helm install, and so you don't have to wait for helm install --wait (as containers will fail until the NS exists)
 - [X] Helm enhancements
   - [X] Add package -c support for Helm TGZ URLs without a repo. E.g. https://github.com/cloudnative-pg/charts/releases/download/cloudnative-pg-v0.28.0/cloudnative-pg-0.28.0.tgz
 - [ ] Add better error handling to invocation of helm upgrade --install as it currently hangs even without --wait, E.g. if one pod doesn't come up right
+  - We can now use a cancellable golang function to do this
+- [ ] Consider replacing call to Unarchive for chart tgz in package so we can remove the archives module dependency entirely
+  - Will mean we drop Windows support, unless they have GNU tar installed (and xz libs)
+  - Alternatively, default to tar where it is available, and use the archives version as a backup alternative (extra file size overhead is minimal)
 - [ ] Add examples to the help output of all kod commands. E.g. chart locally, chart on OCI url etc.
 - [ ] Apply Linux Foundation standards to repo - code of conduct, contributing, security reporting, etc.
 - [ ] Ensure deploying a chart from a folder with a subchart still works
@@ -187,7 +212,7 @@ first.
   - [ ] Multiple helm charts, multiple namespaces support
   - [ ] Same helm chart, multiple namespaces support (E.g. Istio ingress/egress gateways)
   - [ ] helmfile overrides file support (deploy -f option may need its docs changing)
-- [ ] Add Chart dependency chart support
+- [ ] Add Chart dependency chart support for helmfile
   - Will require a deploy:list element in the kod-package file to specify the installable ones that are NOT just dependencies
     - This has the side effect of potentially opening up the possibility to include and invoke multiple helm charts/helmfiles
     - This must be avoided, otherwise semantics like -f to specify override helm chart values files and -n for namespace make no sense

@@ -89,7 +89,7 @@ Examples:
 				// We have a https helm3 registry URL. Name of the chart is in the -c option
 				// Now fetch the chart from a HTTPS URL (Public with no auth)
 
-				chartFolder = filepath.Join(chartFolder, chartPath)
+				//chartFolder = filepath.Join(chartFolder, chartPath)
 				_, err := os.Stat(chartFolder)
 				if err == nil {
 					fmt.Println("Helm chart download folder already exists. Skipping.", chartFolder)
@@ -158,113 +158,13 @@ Examples:
 						os.Exit(1)
 					}
 
-					// Note that helm pull uses the chart name as a subfolder
-					fmt.Println("Saved helm chart to " + chartFolder)
-
-					// Now unarchive it - it's a tar.gz file
-
-					// Use archives to unpack this into the temporary folder (includes path within archive)
-					//format := archives.CompressedArchive{
-					//	Compression: archives.Gz{},
-					//	Extraction:  archives.Tar{},
-					//}
-					//fh, err := os.Open(tempChartArchive)
-					//if err != nil {
-					//	fmt.Println("Error opening chart tgz archive file:", err)
-					//	os.Exit(1)
-					//}
-					//defer fh.Close()
-					//outAbs, err := filepath.Abs(chartFolder)
-					//if err != nil {
-					//	fmt.Println(fmt.Errorf("calling filepath.Abs on output dir '%s' failed: %w", chartFolder, err))
-					//	os.Exit(1)
-					//}
-					//err = format.Extract(context.Background(), fh,
-					//	func(ctx context.Context, fi archives.FileInfo) error {
-					//		nameInArchive := fi.NameInArchive
-					//
-					//		if nameInArchive == "" || nameInArchive == "." {
-					//			return nil
-					//		}
-					//
-					//		cleanName := filepath.Clean(nameInArchive)
-					//		destPath := filepath.Join(outAbs, cleanName)
-					//
-					//		destAbs, err := filepath.Abs(destPath)
-					//		if err != nil {
-					//			return fmt.Errorf("calling filepath.Abs on dest path '%s' failed: %w", destPath, err)
-					//		}
-					//
-					//		// Avoid traversal attacks
-					//		if !strings.HasPrefix(destAbs, outAbs+string(os.PathSeparator)) && destAbs != outAbs {
-					//			return fmt.Errorf("unsafe path in archive: %q", nameInArchive)
-					//		}
-					//
-					//		// Create directory if in archive
-					//		info, err := fi.Stat()
-					//		if err != nil {
-					//			return fmt.Errorf("stat on %q failed: %w", nameInArchive, err)
-					//		}
-					//		if info.IsDir() {
-					//			return os.MkdirAll(destAbs, 0o755)
-					//		}
-					//
-					//		// Ensure parent directories exist
-					//		if err := os.MkdirAll(filepath.Dir(destAbs), 0o755); err != nil {
-					//			return fmt.Errorf("mkdir on parent '%s' failed: %w", destAbs, err)
-					//		}
-					//
-					//		// Open archive entry for reading
-					//		rc, err := fi.Open()
-					//		if err != nil {
-					//			return fmt.Errorf("open entry %q failed: %w", nameInArchive, err)
-					//		}
-					//		defer rc.Close()
-					//
-					//		// Create destination file
-					//		outFile, err := os.OpenFile(destAbs, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
-					//		if err != nil {
-					//			return fmt.Errorf("create on %q failed: %w", destAbs, err)
-					//		}
-					//		defer outFile.Close()
-					//
-					//		// Copy contents
-					//		if _, err := io.Copy(outFile, rc); err != nil {
-					//			return fmt.Errorf("copy on %q failed: %w", nameInArchive, err)
-					//		}
-					//
-					//		return nil
-					//	})
-					//if err != nil {
-					//	fmt.Println("Error unpacking chart tgz:", err)
-					//	os.Exit(1)
-					//}
-					fmt.Println(fmt.Sprintf("Chart '%s' from registry '%s' unpacked to temporary folder '%s'", chartPath, chartRegistry, chartFolder))
-
-					//resp, err := http.Get(chartRegistry)
-					//if err != nil {
-					//	fmt.Println("Error fetching chart at registry:", chartRegistry, err)
-					//	os.Exit(1)
-					//}
-					//defer resp.Body.Close()
-					//
-					//// TODO handle redirects
-					//if resp.StatusCode != http.StatusOK {
-					//	fmt.Println("Failed to fetch chart at registry:", chartRegistry, "Error Status not OK:", resp.StatusCode)
-					//	os.Exit(1)
-					//}
-					//// Now stream the response to our file
-					//body,err := io.ReadAll(resp.Body)
-					//if err != nil {
-					//	fmt.Println("Error reading chart registry fetch response body:", err)
-					//	os.Exit(1)
-					//}
-					//err = os.WriteFile(tempChartArchive, body, 0644)
-					//if err != nil {
-					//	fmt.Println("Error creating temporary chart archive for chart registry:", err)
-					//}
-
 				}
+
+				// Note that helm pull uses the chart name as a subfolder
+				chartFolder = filepath.Join(chartFolder, chartPath)
+				fmt.Println("Saved helm chart to " + chartFolder)
+
+				fmt.Println(fmt.Sprintf("Chart '%s' from registry '%s' unpacked to temporary folder '%s'", chartPath, chartRegistry, chartFolder))
 
 			} else {
 				if strings.HasPrefix(chartRegistry, "oci://") {
@@ -280,15 +180,19 @@ Examples:
 						chartRegistry = newOciUrl
 					}
 
-					// TODO unpack chart
 					// Try direct download using helm pull with OCI format URL
 
-					helmPullExec := exec.Command("helm", "pull", chartRegistry, "--untar", "--untardir", chartFolder)
-					fmt.Println("Executing", helmPullExec.String())
-					helmPullOutput, err := helmPullExec.Output()
-					if err != nil {
-						fmt.Println("Error executing OCI helm pull:", err, "details:", helmPullOutput)
-						os.Exit(1)
+					_, err := os.Stat(chartFolder)
+					if nil == err {
+						fmt.Println("Chart folder already exists. Skipping download. Folder:", chartFolder)
+					} else {
+						helmPullExec := exec.Command("helm", "pull", chartRegistry, "--untar", "--untardir", chartFolder)
+						fmt.Println("Executing", helmPullExec.String())
+						helmPullOutput, err := helmPullExec.Output()
+						if err != nil {
+							fmt.Println("Error executing OCI helm pull:", err, "details:", helmPullOutput)
+							os.Exit(1)
+						}
 					}
 
 					// Note that helm pull uses the chart name as a subfolder
