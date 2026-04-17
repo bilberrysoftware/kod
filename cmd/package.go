@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -261,7 +262,7 @@ Examples:
 			os.Exit(1)
 		}
 		topLevelResult := types.HelmChartProcessingResult{}
-		folderName, chartDef, err := internal.ProcessChartFolder("", true, absChartFolder, true, &topLevelResult)
+		folderName, chartDef, err := internal.ProcessChartFolder(valuesFiles, "", true, absChartFolder, true, &topLevelResult)
 
 		containerList := types.ContainerImageList{}
 		internal.PopulateContainerList(&containerList, &topLevelResult)
@@ -297,6 +298,22 @@ Examples:
 
 				// try to inspect the container image now to list available tags
 				// WARNING: Not specifying a version actually looks for a 'latest' tag, you MUST specify a version if known
+				if "" == ctr.Registry {
+					slashIdx := strings.Index(ctr.Repository, "/")
+					needsFqdn := -1 == slashIdx
+					fmt.Println(fmt.Sprintf("DEBUG: slash Index: '%d'", slashIdx))
+					if !needsFqdn {
+						strToCompare := ctr.Repository[:slashIdx]
+						//var fqdnRE = regexp.MustCompile("(?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\\.)+[a-zA-Z]{2,63}$)") // FAILS TO COMPILE IN GOLANG REGEXP
+						var fqdnRE = regexp.MustCompile("^[a-zA-Z0-9._-]+[a-zA-Z0-9]\\.[a-zA-Z0-9._-]+[a-zA-Z0-9]$")
+						needsFqdn = !fqdnRE.MatchString(strToCompare)
+						fmt.Println(fmt.Sprintf("DEBUG: strToCompare: '%s' matched? %t", strToCompare, needsFqdn))
+					}
+					if needsFqdn {
+						fmt.Println(fmt.Sprintf("WARNING: Container registry blank for %s. Defaulting to docker.io", ctr.Repository))
+						ctr.Registry = "docker.io"
+					}
+				}
 				imageUnversionedPath := "docker://" + ctr.Registry + "/" + ctr.Repository
 				imagePath := imageUnversionedPath
 				if ctr.Tag != "" {
@@ -313,23 +330,36 @@ Examples:
 				// if this fails, try version prepended with 'v' (Thank kube-state-metrics for this workaround)
 				if err != nil {
 					fmt.Println("Error inspecting skopeo image:", ctrFile, "at url:", imagePath, "error:", err, "details:", skopeoInspectOutput.String())
-					fmt.Println("Attempting workaround of prepending version with 'v'...")
+					if strings.HasPrefix(ctr.Tag, "v") {
+						fmt.Println("Attempting workaround of removing prepended 'v'...")
+						imagePath = imageUnversionedPath + ":" + ctr.Tag[1:]
+					} else {
+						fmt.Println("Attempting workaround of prepending version with 'v'...")
+						imagePath = imageUnversionedPath + ":v" + ctr.Tag
+					}
 					skopeoInspectOutput.Clear()
-					imagePath = imageUnversionedPath + ":v" + ctr.Tag
 					skopeoInspectExec = exec.Command("skopeo", "inspect", imagePath)
 					skopeoInspectExec.Stdin = os.Stdin
 					skopeoInspectExec.Stdout = &skopeoInspectOutput
 					skopeoInspectExec.Stderr = os.Stderr
 					err = skopeoInspectExec.Run()
 					if err == nil {
+						msg := ""
+						if strings.HasPrefix(ctr.Tag, "v") {
+							msg = fmt.Sprintf("You are incorrectly using a container tag version for '%s' of '%s' when it should be '%s'. Please fix this.",
+								ctr.Repository, ctr.Tag, ctr.Tag[1:])
+							ctr.Tag = ctr.Tag[1:]
+						} else {
+							msg = fmt.Sprintf("You are incorrectly using a container tag version for '%s' of '%s' when it should be '%s'. Please fix this.",
+								ctr.Repository, ctr.Tag, "v"+ctr.Tag)
+							ctr.Tag = "v" + ctr.Tag
+						}
 						warnings = append(warnings, types.ComplianceWarning{
 							Type:      types.ReferencedTypeHelmChart,
 							Reference: chartDef.Name + ":" + chartDef.Version,
-							Message: fmt.Sprintf("You are incorrectly using a container tag version for '%s' of '%s' when it should be '%s'. Please fix this.",
-								ctr.Repository, ctr.Tag, "v"+ctr.Tag),
-							Detail: skopeoInspectOutput.String(),
+							Message:   msg,
+							Detail:    skopeoInspectOutput.String(),
 						})
-						ctr.Tag = "v" + ctr.Tag
 						ctrFile = filepath.Join(cf, ctr.Repository, ctr.Tag+".tar")
 					}
 				}
@@ -550,6 +580,7 @@ Examples:
 		tarExec.Stdout = &tarOutput
 		tarExec.Stderr = os.Stderr
 		err = tarExec.Run()
+		fmt.Println("100%")
 		//if err != nil {
 		//	return fmt.Errorf("unpacking kodpkg archive failed: %s", tarOutput.String())
 		//}
@@ -610,4 +641,5 @@ func init() {
 	// packageCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 	packageCmd.Flags().StringVarP(&chartPath, "chart", "c", ".", "Folder path containing the local helm chart to package, or the repository path if a remote chart (See -r)")
 	packageCmd.Flags().StringVarP(&chartRegistry, "registry", "r", "", "Registry URL of helm or OCI repo if the chart is remote")
+	packageCmd.Flags().StringArrayVarP(&valuesFiles, "values", "f", []string{}, "The helm values file(s) to use to baseline a deployment during the packaging process")
 }

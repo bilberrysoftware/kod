@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -23,6 +24,7 @@ var cleanup = false
 var insecureNoVerify = false
 var helmWait = false
 var createSecret = false
+var noDigests = false
 var deploymentName = ""
 var targetNamespace = ""
 var registryUrl = ""
@@ -243,6 +245,7 @@ Examples:
 						hint.PackagedImage.Tag = ctr.Tag
 						if ctr.Digest != "" {
 							hint.PackagedImage.Digest = ctr.Digest
+							// Prefer digests to tags??? Would require digests having the correct values!
 						}
 						// Replace value in hints
 						hints.Images[hIdx] = hint
@@ -365,12 +368,14 @@ Examples:
 							content[hint.TagPath] = hint.PackagedImage.Tag
 						}
 
-						// (Note: This usually happens because the value in the helm chart is wrong, or doesn't exist)
-						if hint.DigestPath != "" {
-							if hint.DigestPath == hint.RepositoryPath+".@" {
-								content[hint.RepositoryPath] = content[hint.RepositoryPath] + "@" + hint.PackagedImage.Digest
-							} else {
-								content[hint.DigestPath] = hint.PackagedImage.Digest
+						if !noDigests {
+							// (Note: This usually happens because the value in the helm chart is wrong, or doesn't exist)
+							if hint.DigestPath != "" {
+								if hint.DigestPath == hint.RepositoryPath+".@" {
+									content[hint.RepositoryPath] = content[hint.RepositoryPath] + "@" + hint.PackagedImage.Digest
+								} else {
+									content[hint.DigestPath] = hint.PackagedImage.Digest
+								}
 							}
 						}
 					}
@@ -456,14 +461,37 @@ Examples:
 						lastLevel[part] = content
 						//fmt.Println("DEBUG: last level final content", content, "for part", part)
 					} else {
-						// Note sure this is needed currently, as we don't loop, but just in case I'll leave it here
 						if nil == lastLevel[part] {
 							newIface := map[string]interface{}{}
 							lastLevel[part] = newIface
 						}
-						lastLevel = lastLevel[part].(map[string]interface{})
-						//fmt.Println("DEBUG: intermediate level", part)
+						if reflect.TypeOf(lastLevel[part]) == reflect.TypeOf(map[string]interface{}{}) {
+							lastLevel = lastLevel[part].(map[string]interface{})
+						} else {
+							fmt.Println("DEBUG: intermediate level has value that isn't interface. Skipping secret hint:", ipsh, "part:", part, "parts:", parts)
+							break
+						}
 					}
+				}
+			}
+			if "" != ipsh.SecretNamePath {
+				// First, set boolean enabled flag path, if present
+				if "" != ipsh.EnabledFlagPath {
+					internal.SetRelativeMapValueBoolean(&valuesFile, "", ipsh.EnabledFlagPath, true)
+				}
+
+				// Then, set the secret name path
+				var secretArray []types.SecretReference
+				for _, value := range ipsh.PackagedSecrets {
+					secretArray = append(secretArray, value)
+				}
+				for _, value := range additionalImagePullSecrets {
+					secretArray = append(secretArray, types.SecretReference{
+						Name: value,
+					})
+				}
+				if len(secretArray) > 0 {
+					internal.SetRelativeMapValue(&valuesFile, "", ipsh.SecretNamePath, secretArray[0].Name)
 				}
 			}
 		}
@@ -507,6 +535,21 @@ Examples:
 			chartPath := filepath.Join(tmpFolder, "charts", kodPackage.Name+"-"+kodPackage.Version)
 
 			cmdArgs := []string{"upgrade", "--install", deploymentName, chartPath, "-n", targetNamespace, "--create-namespace", "-f", valuesPath}
+			// Add in any extra CHARTNAME-CHARTVER-values-00x.yaml files
+			count := 1
+			vfName := filepath.Join(tmpFolder, "charts", fmt.Sprintf("%s-%s-values-%03d.yaml", kodPackage.Name, kodPackage.Version, count))
+			_, err := os.Stat(vfName)
+			found := err == nil
+			for found {
+				// apply this file
+				cmdArgs = append(cmdArgs, "-f")
+				cmdArgs = append(cmdArgs, vfName)
+				// Now check for the next file
+				count += 1
+				vfName := filepath.Join(tmpFolder, "charts", fmt.Sprintf("%s-%s-values-%03d.yaml", kodPackage.Name, kodPackage.Version, count))
+				_, err := os.Stat(vfName)
+				found = err == nil
+			}
 			// Include -f values file overrides from command line appended too after our values file
 			for _, vf := range valuesFiles {
 				cmdArgs = append(cmdArgs, "-f")
@@ -586,7 +629,8 @@ func init() {
 	deployCmd.Flags().BoolVar(&cleanup, "cleanup", false, "Remove temporary folder after successful command execution")
 	deployCmd.Flags().BoolVar(&insecureNoVerify, "insecure-no-verify", false, "Do not verify server TLS certs in the Registry or Kubernetes")
 	deployCmd.Flags().BoolVar(&helmWait, "wait", false, "Pass the --wait parameter to the helm upgrade --install command")
-	deployCmd.Flags().BoolVar(&createSecret, "create-secret", false, "Create the registry secret from the docker logged in info. Uses the first secret named in the -s option as the name.")
+	deployCmd.Flags().BoolVar(&createSecret, "create-secret", false, "Create the registry secret from the docker logged in info. Uses the first secret named in the -s option as the name")
+	deployCmd.Flags().BoolVar(&noDigests, "no-digests", false, "Use only the tag value and not the SHA256 Digest when generating helm chart values files on deployment")
 	deployCmd.Flags().StringVarP(&packagePath, "package", "p", "", ".kodpkg file to deploy")
 	deployCmd.Flags().StringVarP(&deploymentName, "deployment", "d", "", "Deployment name for helm")
 	deployCmd.Flags().StringVarP(&targetNamespace, "namespace", "n", "default", "Target Kubernetes Namespace")

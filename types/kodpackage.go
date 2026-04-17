@@ -49,14 +49,16 @@ type SecretReference struct {
 }
 
 /*
- * Represents a pointer to an image pull secrets path
+ * Represents a pointer to an image pull secrets path - which is either an array or a single secret name
  */
 type SecretHint struct {
-	SecretArrayPath string            `yaml:"secretArrayPath"`
+	SecretArrayPath string            `yaml:"secretArrayPath,omitempty"` // if it's an imagePullSecrets array, as per spec
+	SecretNamePath  string            `yaml:"secretNamePath,omitempty"`  // if it's a simple string element (just use first el of array below) (E.g. NiFiKop Operator image.imagePullSecrets.name)
+	EnabledFlagPath string            `yaml:"enabledFlagPath,omitempty"` // boolean enabling flag for the above. Usually under the same parent as the above
 	PackagedSecrets []SecretReference `yaml:"packagedSecrets"`
 }
 
-/**
+/*
  * Acts as the top level of the CHARTNAME-CHARTVER-hints.yaml file
  */
 type HintsFile struct {

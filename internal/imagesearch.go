@@ -52,6 +52,21 @@ func FindContainerImagesByImageChildValues(chartDef types.HelmChart, parentPath 
 					vImageRegistryStr = vImageRepositoryStr[:idx]
 					vImageRepositoryStr = vImageRepositoryStr[idx+1:]
 					hint.RegistryPath = "repository./"
+				} else {
+					// Ensure the first part is NOT an FQDN before we set to docker.io
+					strToCompare := vImageRepositoryStr[:idx]
+					fqdnRE := regexp.MustCompile("^[a-zA-Z0-9._-]+[a-zA-Z0-9]\\.[a-zA-Z0-9._-]+[a-zA-Z0-9]$")
+					if fqdnRE.MatchString(strToCompare) {
+						// Still a repository with a registry path in it
+						vImageRegistryStr = vImageRepositoryStr[:idx]
+						vImageRepositoryStr = vImageRepositoryStr[idx+1:]
+						hint.RegistryPath = "repository./"
+					} else {
+						// vImageRegistry isn't in repository either - so default to docker.io, and assume the override is in repository
+						fmt.Println(" - WARNING: registry path is not specified, so setting to docker.io and assuming it's overridden in the repository tag path of:", vImageRepositoryStr)
+						vImageRegistryStr = "docker.io"
+						hint.RegistryPath = "repository./"
+					}
 				}
 			} else {
 				vImageRegistryStr = strings.TrimSpace(vImageRegistry.(string))
@@ -122,6 +137,43 @@ func FindContainerImagesByImageTagSearch(chartDef types.HelmChart, parentPath st
 					if err != nil {
 						return err
 					}
+
+					// Check for imagePullSecrets under here too
+					ipsh := types.SecretHint{}
+					ipsh.PackagedSecrets = []types.SecretReference{}
+					ipsEl := el["imagePullSecrets"]
+					if ipsEl != nil {
+						// Option 1. It's an array of strings as per K8s specification
+						// This is if it has a value specified. It will be an empty interface{} if blank (which is the norm)
+						if reflect.TypeOf(ipsEl) == reflect.TypeOf([]string{}) {
+							ips := ipsEl.([]string)
+							for _, secretRef := range ips {
+								ipsh.PackagedSecrets = append(ipsh.PackagedSecrets, types.SecretReference{Name: secretRef})
+							}
+							//} else {
+							//	hints.ImagePullSecrets.PackagedSecrets = []string{}
+							ipsh.SecretArrayPath = valuePath + ".imagePullSecrets"
+							hints.ImagePullSecrets = append(hints.ImagePullSecrets, ipsh)
+						}
+						// Option 2. It's a single secret name with an enabling flag
+						// Ensure type is map[string]interface{}{}, otherwise check for 'enabled' boolean and 'name'(which may not exist) - NiFiKop operator
+						if reflect.TypeOf(ipsEl) == reflect.TypeOf(map[string]interface{}{}) {
+							ipsNonArray := ipsEl.(map[string]interface{})
+
+							nameEl := ipsNonArray["name"]
+							if nameEl != nil {
+								ipsh.PackagedSecrets = append(ipsh.PackagedSecrets, types.SecretReference{Name: nameEl.(string)})
+							}
+							ipsh.SecretNamePath = valuePath + ".imagePullSecrets.name"
+
+							enabledEl := ipsNonArray["enabled"]
+							if enabledEl != nil {
+								ipsh.EnabledFlagPath = valuePath + ".imagePullSecrets.enabled"
+							}
+
+							hints.ImagePullSecrets = append(hints.ImagePullSecrets, ipsh)
+						}
+					}
 				} else {
 					// Otherwise, process sub keys (depth first search
 					// Qn: Is there any circumstance where an image parent may be within another tag whose parent matches the regexp too?
@@ -131,6 +183,7 @@ func FindContainerImagesByImageTagSearch(chartDef types.HelmChart, parentPath st
 						return err
 					}
 				}
+
 			}
 		}
 	}

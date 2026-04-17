@@ -48,21 +48,15 @@ first.
         - docker.io/grafana/grafana:12.4.2
         - Find out what elements these live in, and if we can reasonably detect them without a hints file
           - They're all sub chart dependencies!
-  - [ ] Further image detection improvements
-    - [ ] Another convention is global.imageRegistry (2 of top ten) (Will override other registry refs)
+  - [X] Further image detection improvements
     - [X] Add support for cert-manager imageRegistry and imageNamespace and COMPONENT/image.name
       - Has old and new way. New way is imageRegistry/imageNamespace/{component}:image.name:{image.digest (NOT DEFINED IN VALUES.YAML) OR image.tag (NOT DEFINED IN VALUES.YAML) OR Chart.AppVersion}
       - [X] Package working
       - [X] Deploy working (Looks for ^ in hint to separate parts of Repository out among two global fields)
-        - [X] Ensure subelement search does process multiple element values (i.e. firstlevel.secondlevel.valuefield)
+        - [X] Ensure sub-element search does process multiple element values (i.e. firstlevel.secondlevel.valuefield)
     - [X] Search entire tree for '.*\[iI\]mage' and sub elements (4 of top ten)
       - ArgoCD, kube-prometheus-stack
-    - [ ] Allow specification of container images, and links to config elements, for things we cannot guess - kod-hints.yaml
-      - Note: include this as CHART-CHARTVER-hints-00x.yaml in the output archive too
-    - [ ] Consider reading images required from the deployment YAML templates (helm template), and reverse parse their parameters (Complex)
-      - If it works, we should be able to support any helm chart OOTB without a hints file
-    - [ ] Consider reading images required from a commented values file (so it can be used in package -f with no additional hints file specific to kod)
-  - [?] Add subchart support
+  - [X] Add subchart support
     - [X] Separate chart packaging into its own function 
     - [X] Read dependency chart information
       - Required for all Bitnami charts that use the bitnami-common dependency (Redis, MongoDB are known)
@@ -73,7 +67,7 @@ first.
     - [X] Call chart packaging function recursively
     - [X] Verify all charts and containers are downloaded, if it's possible to detect them
       - [X] BUG package command is not fully populating any found containers from sub charts
-    - [ ] Ensure we check to see if the same chart has already been downloaded
+    - [X] Ensure we check to see if the same chart has already been downloaded
       - [X] BUG: If oci helm chart unpack temporary folder exists, instead of not downloading and just processing the folder, it tries to redownload and fails
         - Still errors:-
           - go run main.go package -r oci://ghcr.io/konpyutaika/helm-charts -c nifikop
@@ -83,11 +77,13 @@ first.
             Error executing OCI helm pull: exit status 1 details: []
             exit status 1
       - [X] BUG: Package of cert-manager fails - double download folder cert-manager/cert-manager
-        - go run main.go package -r https://charts.jetstack.io -c cert-manager
+        - go run main.go package -r https://charts.jetstack.io -c cert-manager -f chartfiles/cert-manager/values.yaml
         - Was prefixing cert-manager twice. Moved to same logic as OCI repos
-      - [ ] Need to verify nifikop deploy once cert-manager is installed (requires Issuer CRD)
+      - [X] Need to verify nifikop deploy once cert-manager is installed (requires Issuer CRD)
         - go run main.go package -r oci://ghcr.io/konpyutaika/helm-charts -c nifikop (Works first time)
-        - go run main.go deploy -p /tmp/kod-nifikop-1.17.0.kodpkg -s zot -d nifi -r https://auburnwinter.tail0972b.ts.net:8080
+        - go run main.go deploy -p /tmp/kod-nifikop-1.17.0.kodpkg -s zot -d nifi -r $REGISTRY
+        - [X] Needs image.imagePullSecrets set, and this wasn't detected on package creation
+        - [X] BUG: Figure out why it's not running - may needs its own default values file - Just missing its own runtime config
       - [X] Ensure subsequent runs of package without removing temporary files always runs, and doesn't break hints files or other metadata files
         - Still errors:
           -  go run main.go package -r oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack
@@ -134,37 +130,127 @@ first.
       - ABANDONED - absolutely eats CPU cycles. This is referenced in tar file handling in the repo. May be better to use tar xf when simply unpacking
         - [X] DONE Consider using raw `tar xf FILENAME` to unpack... See if we can get a progress output too.
     - [X] Add equivalent to Archiving of the final kodpkg file
-  - [ ] Check if we should be using alias or name for subchart folder name processing (and sub values mapping) - See cloudnative-pg chart dependencies
-  - [ ] Improve container version detection by checking `inspect` output RepoTags list for the version, or latest, or first listed (most recent) version before executing `skopeo copy`
 - [X] BUG: Output of long commands with \n in them such as helm upgrade --install doesn't prepend emoji on every line
-- [ ] Allow packaging with -f option to override default values, especially image paths to a local container registry
+- [X] Allow packaging with -f option to override default values, especially image paths to a local container registry
   - Note that this is useful where you're already copying container images from public repos to private repos, as you'll want to package those versions up, and will likely already have the values override file to specify the right container images 
-  - [ ] Use this with helm template to parse final output to find all container image references
+  - [X] NOT NEEDED YET - Consider using this with helm template to parse final output to find all container image references
     - How to reverse engineer this back into properties that can be overridden?
-  - [ ] Include these as CHARTNAME-CHARTVERSION-001-values.yaml and 002, 003 etc within the package
+  - [X] Include these as CHARTNAME-CHARTVERSION-001-values.yaml and 002, 003 etc within the package
     - This is particularly useful for providing default, well known, configuration to data layer helm charts (Kafka, Nifi, elasticsearch, MongoDB et al)
     - Kept as separate files to aid in debugging and security verification of kod
-  - [ ] Update deploy to use these values files
-  - [ ] Test with cert-manager as it needs crds.enabled=true for the startupapicheck to work on helm install
-- [ ] Improve error handling and logging
-  - [ ] Add in debug logging support alongside STDOUT info for humans
+  - [X] Update deploy to use these values files
+  - [X] Test with cert-manager as it needs crds.enabled=true for the startupapicheck to work on helm install - make this our first built-in
 - [X] Add deploy --create-secret to populate the imagePullSecret in the relevant namespace (if skopeo logged in, create from the ~/.docker/config.json)
   - [X] create this in parallel with the helm deploy, so that the user doesn't have to create the namespace manually before helm install, and so you don't have to wait for helm install --wait (as containers will fail until the NS exists)
 - [X] Helm enhancements
   - [X] Add package -c support for Helm TGZ URLs without a repo. E.g. https://github.com/cloudnative-pg/charts/releases/download/cloudnative-pg-v0.28.0/cloudnative-pg-0.28.0.tgz
-- [ ] Add better error handling to invocation of helm upgrade --install as it currently hangs even without --wait, E.g. if one pod doesn't come up right
-  - We can now use a cancellable golang function to do this
+- [ ] Add more top ten chart support
+  - [X] Standalone postgres instance
+    - [X] Default docker host to docker.io when its blank (required by postgres chart)
+      - [X] docker.io missing from container uploaded to container registry, and in deployment URL
+        - values file tagpath is blank - image.""
+        - note: versionOverride instead of tag/version (Is ok because it defaults to Chart.AppVersion)
+      - [X] imagePullSecrets at top level not detected - if empty, is an []interface{} not a []string
+  - [X] Retest kube-prometheus-stack - Fails as node-exporter uses both tag and digest if provided, and our digests don't match the original source yet
+    - go run main.go package -r oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack
+    - go run main.go deploy -p $TMPDIR/kod-kube-prometheus-stack-83.6.0.kodpkg -n monitoring -d kps -s zot --create-secret --no-digests -r $REGISTRY 
+    - [X] BUG: Package doesn't pick up global.imagePullSecrets: [] anymore and doesn't inject it into the hints file
+    - BUG: Doesn't like version number and SHA in ref - but only because the sha doesn't match the one in the repo
+      - Back-off pulling image "$REGISTRY/kod/containers/quay.io/prometheus/node-exporter:v1.11.1@sha256:0f422f62c15f154af8d8572b23d623aebfb10cec73a5c654d18f911f3f9df241"
+      - Likely due to this:-
+        - Processing container with repository prometheus/node-exporter and tag v1.11.1
+          WARNING Hint has an invalid container tag. Setting to this available container tag. Reg: quay.io Repo: prometheus/node-exporter Tag: 1.11.1 -> v1.11.1
+          WARNING Hint has an invalid container tag. Setting to this available container tag. Reg: quay.io Repo: prometheus/node-exporter Tag: 1.11.1 -> v1.11.1
+          Executing /usr/bin/skopeo copy docker-archive:/tmp/kod-kube-prometheus-stack-83.6.0/containers/quay.io/prometheus/node-exporter/v1.11.1.tar docker://$REGISTRY/kod/containers/quay.io/prometheus/node-exporter:v1.11.1 --retry-times 5
+        - [ ] LATER: Packaging: kube-prometheus-stack: Requires the sha256 consistency fix before we can fix this
+          - Now with --preserve-digests we get this:-
+            - Executing /usr/bin/skopeo inspect docker://docker.io/library/busybox:1.37.0
+              Executing /usr/bin/skopeo copy docker://docker.io/library/busybox@sha256:1487d0af5f52b4ba31c7e465126ee2123fe3f2305d638e7827681e7cf6c83d5e docker-archive:/tmp/kod-package-kube-prometheus-stack-83.6.0/containers/docker.io/library/busybox/1.37.0.tar --retry-times 5 --preserve-digests
+              🚢 Getting image source signatures
+              🚢 Copying blob sha256:481282afbc4304ffee4792258ea114f09e423a4a082335b30695b50310394f47
+              🚢 Copying config sha256:925ff61909aebae4bcc9bc04bb96a8bd15cd2271f13159fe95ce4338824531dd
+              🚢 Writing manifest to image destination
+              FATA[0003] copying system image from manifest list: writing manifest: Unsupported manifest type, need a Docker schema 2 manifest
+              Error running skopeo copy: exit status 1 details: Getting image source signatures
+              Copying blob sha256:481282afbc4304ffee4792258ea114f09e423a4a082335b30695b50310394f47
+              Copying config sha256:925ff61909aebae4bcc9bc04bb96a8bd15cd2271f13159fe95ce4338824531dd
+              Writing manifest to image destination
+              Trying backup approach of using tag 'latest' (Needed for many Bitnami container images)
+              Executing /usr/bin/skopeo copy docker://docker.io/library/busybox:latest docker-archive:/tmp/kod-package-kube-prometheus-stack-83.6.0/containers/docker.io/library/busybox/1.37.0.tar --retry-times 5 --preserve-digests
+              🚢 Getting image source signatures
+              🚢 Copying blob sha256:481282afbc4304ffee4792258ea114f09e423a4a082335b30695b50310394f47
+              🚢 Copying config sha256:925ff61909aebae4bcc9bc04bb96a8bd15cd2271f13159fe95ce4338824531dd
+              🚢 Writing manifest to image destination
+              FATA[0003] copying system image from manifest list: writing manifest: Unsupported manifest type, need a Docker schema 2 manifest
+              Error running skopeo copy using latest tag: exit status 1 details: Getting image source signatures
+          - [X] Workaround: Add a --nodigests flag to deploy for now, and don't do --preserve-digests?
+          - Works but node-exporter is complaining (likely due to prometheus missing?):-
+            - Error: failed to generate container "1a0fe2a06fccbcd901655a4c0f1e8c4bb047a7ed819181a59319604b34dede66" spec: failed to generate spec: path "/" is mounted on "/" but it is not a shared or slave mount
+  - [X] Retest argo-cd
+    - go run main.go package -r oci://ghcr.io/argoproj/argo-helm/argo-cd
+    - go run main.go deploy -p $TMPDIR/kod-argo-cd-9.5.2.kodpkg -n cd -d myargo -s zot --create-secret -r $REGISTRY
+    - [X] NIGGLE: If v1.2.3 not found, remove v rather than add another in tag for version guessing: docker://ecr-public.aws.com/docker/library/haproxy:vv3.3.7
+    - [X] BUG: Package doesn't pick up global.imagePullSecrets: [] anymore and doesn't inject it into the hints file
+  - [X] Retest traefik - Fails on imagePullSecrets detection
+    - go run main.go package -r oci://ghcr.io/traefik/helm/traefik
+    - go run main.go deploy -p $TMPDIR/kod-traefik-39.0.8.kodpkg -n traefik -d myt -s zot --create-secret -r $REGISTRY
+    - [ ] LATER: Packaging: Traefik: Requires deployment.imagePullSecrets support
+  - [X] Retest redis OT Operator - Fails on both image and imagePullSecrets detection
+    - go run main.go package -r https://ot-container-kit.github.io/helm-charts/ -c redis-operator
+    - go run main.go deploy -p $TMPDIR/kod-redis-operator-0.24.0.kodpkg -n redis-operator -d myro -s zot --create-secret -r $REGISTRY
+    - [ ] LATER: Packaging: OT Redis Operator: Requires redisOperator.{imageName,imageTag (default: Chart.AppVersion),initContainerImageTag,imagePullSecrets:[]}
+  - [X] Retest loki - Fails as the Chart's values.yaml doesn't produce a complete default configuration
+    - go run main.go package -r oci://ghcr.io/grafana-community/helm-charts/loki
+    - go run main.go deploy -p $TMPDIR/kod-loki-13.1.2.kodpkg -n loki -d myl -s zot --create-secret -r $REGISTRY
+    - [ ] LATER: Packaging: loki: NIGGLE: Uses null instead of "" for global.imageRegistry (but each container has their own anyway)
+    - [X] BUG: imagePullSecrets at top level was not detected
+      - Because it has a global but this is NOT where imagePullSecrets sits! 
+    - [ ] LATER: Packaging: loki: Create values file for default basic installation
+      - Error: execution error at (loki/templates/monolithic/statefulset.yaml:48:8): Please define loki.storage.bucketNames.chunks
+  - [ ] Retest keycloak (if non-Bitnami and non-OLM can be found)
+  - [ ] Retest prometheus standalone
+    - go run main.go package -r oci://ghcr.io/prometheus-community/charts/prometheus
+    - go run main.go deploy -p $TMPDIR/kod-prometheus-29.2.1.kodpkg -n prometheus -d myprom -s zot --create-secret --no-digests -r $REGISTRY
+      - [?] Deploy doesn't work due to below issue, but also that 3 containers have tags and digests, and digests don't match yet
+    - [?] BUG: Packaging has two registry URLs for one container:-
+      - Executing /usr/bin/skopeo inspect docker://docker.io/quay.io/prometheus/pushgateway:v1.11.2
+        FATA[0001] Error parsing image name "docker://docker.io/quay.io/prometheus/pushgateway:v1.11.2": reading manifest v1.11.2 in docker.io/quay.io/prometheus/pushgateway: requested access to the resource is denied
+        Error inspecting skopeo image: /tmp/kod-package-prometheus-29.2.1/containers/docker.io/quay.io/prometheus/pushgateway/v1.11.2.tar at url: docker://docker.io/quay.io/prometheus/pushgateway:v1.11.2 error: exit status 1 details:
+      - Likely because it's registry is blank and we didn't check if registry path was blank instead!
+        - WARNING: no version tag found for container. Defaulting to 'Chart.appVersion' for quay.io/prometheus/pushgateway
+          Found container image: '/quay.io/prometheus/pushgateway:v1.11.2@' at path 'image'
+          Searching for any element named '.*[iI]mage'...
+          WARNING: no version tag found for container. Defaulting to 'Chart.appVersion' for quay.io/prometheus/pushgateway
+      - [?] Added a more sophisticated domain name check at start of ctr.Repository if ctr.Registry == "" to prevent double domaining when there is no separate registry element
+        - BUG LEADING SLASH IF NO REGISTRY THERE: - Found container image: '`/`quay.io/prometheus/pushgateway:v1.11.2@' at path 'image'
+- Found container image: '/quay.io/prometheus/pushgateway:v1.11.2@' at path 'image'
+- [ ] Retest personal list charts
+  - [ ] Retest kafka-operator
+    - go run main.go package -r oci://quay.io/strimzi-helm/strimzi-kafka-operator
+    - go run main.go deploy -p $TMPDIR/kod-strimzi-kafka-operator-???.kodpkg -n kafka-operator -d myko -s zot --create-secret -r $REGISTRY
+  - [ ] Retest ECK operator
+  - [ ] Retest RabbitMQ Operator (if non-Bitnami can be found)
+  - [ ] Retest OPA
+  - [ ] Retest MongoDB (if non-Bitnami can be found)
+- [ ] Improve error handling and logging
+  - [ ] Add in debug logging support alongside STDOUT info for humans
+  - [ ] Add better error handling to invocation of helm upgrade --install as it currently hangs even without --wait, E.g. if one pod doesn't come up right
+    - We can now use a cancellable golang function to do this
 - [ ] Consider replacing call to Unarchive for chart tgz in package so we can remove the archives module dependency entirely
   - Will mean we drop Windows support, unless they have GNU tar installed (and xz libs)
   - Alternatively, default to tar where it is available, and use the archives version as a backup alternative (extra file size overhead is minimal)
 - [ ] Add examples to the help output of all kod commands. E.g. chart locally, chart on OCI url etc.
 - [ ] Apply Linux Foundation standards to repo - code of conduct, contributing, security reporting, etc.
+- [ ] BUG: Local deployed image sha256 digest doesn't match one downloaded from source repo - do we need to use the --preserve-digests tag in skopeo copy?
 - [ ] Ensure deploying a chart from a folder with a subchart still works
   - i.e. ensure helm dependency update is called to populate ./charts in the helm chart
 - [ ] How do we know we have succeeded?
-  - [ ] Cloudnative Postgres chart (NOT Bitnami version) - https://github.com/cloudnative-pg/charts
+  - [ ] Postgres chart
+  - [ ] Cloudnative Postgres operator chart (NOT Bitnami version) - https://github.com/cloudnative-pg/charts
   - [ ] Cert-manager chart works (Remote chart, non-standard image location)
     - imageRegistry, imageNamespace and image.name, weirdly, OR image.repository to override ALL THREE
+    - go run main.go package -r https://charts.jetstack.io -c cert-manager -f chartfiles/cert-manager/values.yaml
+    - go run main.go deploy -p $TMPDIR/kod-cert-manager-???.kodpkg -n cert-manager -d mycm -s zot --create-secret -r $REGISTRY
   - [ ] Nifikop operator works (Remote chart + OCI) `go run main.go deploy -n nifi-operator -p /tmp/kod-nifikop-1.16.0.kodpkg -r  https://REGISTRY:8080/ -d nifikop -f examples/charts/nifikop/basic-values.yaml`
   - [ ] kube-prometheus-stack chart works (*mage image refs, and chart dependencies, and sidecar containers in those dependencies)
 - [ ] Update docs with helm charts that work
@@ -174,9 +260,31 @@ first.
 
 ### v0.3.0  release - usage checks and environment support
 
-- [ ] BUG: Remove duplicate values in root hints file (grafana.image in kube-promethus-stack chart) on package
+- [ ] BUG: Remove duplicate values in root hints file on package
+  - E.g. grafana.image in kube-promethus-stack chart
+  - E.g. image in postgres chart
 - [ ] Provide a --hide-registry-urls option on package so that an internal replica of public container images doesn't end up named 'myinternalregistry.local/docker.io/MYNAME:TAG' and is instead just named for its original location 'docker.io/MYNAME:TAG'
   - Note that the image itself may still include this reference as a separate tag value
+- [ ] Improve container detection support
+  - [ ] Another convention is global.imageRegistry (2 of top ten) (Will override other registry refs)
+  - [ ] top level defaultImageRegistry/Repository/Tag: Strimzi Kafka Operator
+    - defaultImageRegistry: quay.io
+      defaultImageRepository: strimzi
+      defaultImageTag: 0.51.0
+    - image.name, (blank image.registry,repository,tag) x13
+    - Just a variation on image.repository / global.imageRepository
+  - [ ] Allow specification of container images, and links to config elements, for things we cannot guess - kod-hints.yaml
+    - Note: include this as CHART-CHARTVER-hints-00x.yaml in the output archive too
+  - [ ] Consider reading images required from the deployment YAML templates (helm template), and reverse parse their parameters (Complex)
+    - If it works, we should be able to support any helm chart OOTB without a hints file
+  - [ ] Improve container version detection by checking `inspect` output RepoTags list for the version, or latest, or first listed (most recent) version before executing `skopeo copy`
+  - [ ] Consider reading images required from a commented values file (so it can be used in package -f with no additional hints file specific to kod)
+- [ ] Packaging improvements
+  - [ ] Allow specification of chart version in package (especially useful for oci repos, and for our documentation to be version matched) 
+  - [ ] Check if we should be using alias or name for subchart folder name processing (and sub values mapping) - See cloudnative-pg chart dependencies
+  - [ ] Check to see if we have global.imagePullSecrets then can we remove DEPENDENCY.global.imagePullSecrets?
+    - [ ] Same check for global.imageRegistry
+  - [ ] Handle wildcarded subchart versions. E.g. see Prometheus subchart as all are wildcarded - mv wildcarded folder (with content) to exact version (no content, with hints)
 - [ ] Consider splitting deploy into populate and deploy commands so we have a separation of concerns between those who can write to the repo and deploy the package
   - Still make just executing deploy check if it needs to populate, if executed from a .kodpkg
   - Document the different personae of users / actors in invoking kod
@@ -217,6 +325,15 @@ first.
     - This has the side effect of potentially opening up the possibility to include and invoke multiple helm charts/helmfiles
     - This must be avoided, otherwise semantics like -f to specify override helm chart values files and -n for namespace make no sense
     - Prefer multiple invocations of kod and separate packages for distinct charts
+- [ ] Create Istio and Kiali Helmfile example
+  - [ ] Create helmfile
+  - [ ] Test istio base
+  - [ ] Test istiod
+  - [ ] Test gateway (ingress only at this point)
+    - [ ] Fix expected bug where target version containers are not packaged or identified
+  - [ ] Test kiali
+  - [ ] Test end to end
+  - [ ] Update helmfile documentation how-to pages
 
 ### v0.5.0 release - Usability and compliance improvements
 

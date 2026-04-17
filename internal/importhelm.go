@@ -10,10 +10,29 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func MergeMaps(a, b map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(a))
+	for k, v := range a {
+		out[k] = v
+	}
+	for k, v := range b {
+		if v, ok := v.(map[string]interface{}); ok {
+			if bv, ok := out[k]; ok {
+				if bv, ok := bv.(map[string]interface{}); ok {
+					out[k] = MergeMaps(bv, v)
+					continue
+				}
+			}
+		}
+		out[k] = v
+	}
+	return out
+}
+
 /**
  * Processes a single source chart folder into a temporary location as the main chart folder
  */
-func ProcessChartFolder(rootPackageFolder string, isRootPackage bool, chartFolder string, copyRequired bool, resultToPopulate *types.HelmChartProcessingResult) (string, types.HelmChart, error) {
+func ProcessChartFolder(valuesFiles []string, rootPackageFolder string, isRootPackage bool, chartFolder string, copyRequired bool, resultToPopulate *types.HelmChartProcessingResult) (string, types.HelmChart, error) {
 	// See if the Chart.yaml file exists, error if not
 	folder, err := os.Stat(chartFolder)
 	if err != nil {
@@ -66,6 +85,7 @@ func ProcessChartFolder(rootPackageFolder string, isRootPackage bool, chartFolde
 
 	// Determine the container images required
 	// Read the values YAML file and look for common properties
+	valuesMap := make(map[string]interface{})
 	valuesPath := filepath.Join(chartFolder, "values.yaml")
 	valuesFile, err := os.Stat(valuesPath)
 	if err != nil {
@@ -76,7 +96,6 @@ func ProcessChartFolder(rootPackageFolder string, isRootPackage bool, chartFolde
 		fmt.Println(valuesPath, "is a directory and not a YAML file")
 		os.Exit(1)
 	}
-	valuesMap := make(map[string]interface{})
 	valuesYaml, err := os.ReadFile(valuesPath)
 	if err != nil {
 		fmt.Println(valuesYaml, "could not be read", err)
@@ -86,6 +105,49 @@ func ProcessChartFolder(rootPackageFolder string, isRootPackage bool, chartFolde
 	if err != nil {
 		fmt.Println(valuesPath, "could not be parsed", err)
 		os.Exit(1)
+	}
+
+	// Create charts folder
+	chartsPath := filepath.Join(rootPackageFolder, "charts")
+	// Don't copy if folder already exists
+	_, err = os.Stat(chartsPath)
+	if err != nil {
+		err = os.MkdirAll(chartsPath, os.ModePerm)
+	}
+
+	// Now merge in any additional values files
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Println("Error fetching present working directory", err)
+		os.Exit(1)
+	}
+	for valuesIdx, extraValuesPath := range valuesFiles {
+		newValuesMap := make(map[string]interface{})
+		valuesPath := filepath.Join(wd, extraValuesPath)
+		valuesFile, err := os.Stat(valuesPath)
+		if err != nil {
+			fmt.Println("Extra values files path does not exist. Skipping.", valuesPath, "details:", err)
+		}
+		if valuesFile.IsDir() {
+			fmt.Println(valuesPath, "is a directory and not a YAML file. Skipping")
+		}
+		valuesYaml, err := os.ReadFile(valuesPath)
+		if err != nil {
+			fmt.Println(valuesPath, "could not be read. Skipping", err)
+		}
+		err = yaml.Unmarshal(valuesYaml, &newValuesMap)
+		if err != nil {
+			fmt.Println(valuesPath, "could not be parsed. Skipping", err)
+		}
+		valuesMap = MergeMaps(valuesMap, newValuesMap)
+
+		// Now copy file into charts folder, and rename
+		valuesTargetPath := filepath.Join(chartsPath, fmt.Sprintf("%s-values-%03d.yaml", chartAndVersion, valuesIdx+1))
+		err = os.WriteFile(valuesTargetPath, valuesYaml, os.ModePerm)
+		if err != nil {
+			fmt.Println("Error copying values file:", valuesPath, "to:", valuesTargetPath, "error:", err)
+			os.Exit(1)
+		}
 	}
 
 	// Create hints file for all that we learn about the container images used by this chart
@@ -133,45 +195,102 @@ func ProcessChartFolder(rootPackageFolder string, isRootPackage bool, chartFolde
 	fmt.Println("Searching for imagePullSecrets...")
 	globalEl := valuesMap["global"]
 	if globalEl != nil {
-		// TODO ensure type is map before case
-
-		ipsh := types.SecretHint{}
-		ipsh.PackagedSecrets = []types.SecretReference{}
-
 		global := globalEl.(map[string]interface{})
 		ipsEl := global["imagePullSecrets"]
 		if ipsEl != nil {
+			ipsh := types.SecretHint{}
+			ipsh.PackagedSecrets = []types.SecretReference{}
+
+			fmt.Println(" - Found global.imagePullSecrets")
+			// Option 1a. It's an array of strings as per K8s specification
 			// This is if it has a value specified. It will be an empty interface{} if blank (which is the norm)
 			if reflect.TypeOf(ipsEl) == reflect.TypeOf([]string{}) {
+				fmt.Println("DEBUG: got string or interface (blank) array for global.imagePullSecrets")
 				ips := ipsEl.([]string)
 				for _, secretRef := range ips {
 					ipsh.PackagedSecrets = append(ipsh.PackagedSecrets, types.SecretReference{Name: secretRef})
 				}
 				//} else {
 				//	hints.ImagePullSecrets.PackagedSecrets = []string{}
+				ipsh.SecretArrayPath = "global.imagePullSecrets"
+				hints.ImagePullSecrets = append(hints.ImagePullSecrets, ipsh)
 			}
-			ipsh.SecretArrayPath = "global.imagePullSecrets"
+			// Option 1b. It's an empty string array, which comes back as an interface array
+			if reflect.TypeOf(ipsEl) == reflect.TypeOf([]interface{}{}) {
+				fmt.Println("DEBUG: got array of interface{} for global.imagePullSecrets")
+				// Must be a blank imagePullSecrets
+				ipsh.SecretArrayPath = "global.imagePullSecrets"
+				hints.ImagePullSecrets = append(hints.ImagePullSecrets, ipsh)
+			}
+
+			// Option 2. It's a single secret name with an enabling flag
+			// Ensure type is map[string]interface{}{}, otherwise check for 'enabled' boolean and 'name'(which may not exist) - NiFiKop operator
+			if reflect.TypeOf(ipsEl) == reflect.TypeOf(map[string]interface{}{}) {
+				fmt.Println("DEBUG: got map[string]interface for global.imagePullSecrets")
+				ipsNonArray := ipsEl.(map[string]interface{})
+
+				nameEl := ipsNonArray["name"]
+				if nameEl != nil {
+					ipsh.PackagedSecrets = append(ipsh.PackagedSecrets, types.SecretReference{Name: nameEl.(string)})
+				}
+				ipsh.SecretNamePath = "global.imagePullSecrets.name"
+
+				enabledEl := ipsNonArray["enabled"]
+				if enabledEl != nil {
+					ipsh.EnabledFlagPath = "global.imagePullSecrets.enabled"
+				}
+
+				hints.ImagePullSecrets = append(hints.ImagePullSecrets, ipsh)
+			}
 		}
-		hints.ImagePullSecrets = append(hints.ImagePullSecrets, ipsh)
-	} else {
+	}
+
+	// Note: Some charts like loki have a 'global' element, but imagePullSecrets is not under it, being instead still at the top level
+	ipsEl := valuesMap["imagePullSecrets"]
+	if ipsEl != nil {
 		ipsh := types.SecretHint{}
 		ipsh.PackagedSecrets = []types.SecretReference{}
 
-		ipsEl := valuesMap["imagePullSecrets"]
-		if ipsEl != nil {
-			if reflect.TypeOf(ipsEl) == reflect.TypeOf([]string{}) {
-				ips := ipsEl.([]string)
-				for _, secretRef := range ips {
-					ipsh.PackagedSecrets = append(ipsh.PackagedSecrets, types.SecretReference{Name: secretRef})
-				}
-
-				//} else {
-				//	nameMap := map[string]interface{}{}
-				//	hints.ImagePullSecrets.PackagedSecrets = []string{}
+		fmt.Println(" - Found top level imagePullSecrets")
+		// Option 1a. It's an array of strings as per K8s specification
+		// This is if it has a value specified. It will be an empty interface{} if blank (which is the norm)
+		fmt.Println("DEBUG: type of imagePulLSecrets:", reflect.TypeOf(ipsEl).String())
+		if reflect.TypeOf(ipsEl) == reflect.TypeOf([]string{}) {
+			fmt.Println("DEBUG: got string or interface (blank) array for imagePullSecrets")
+			ips := ipsEl.([]string)
+			for _, secretRef := range ips {
+				ipsh.PackagedSecrets = append(ipsh.PackagedSecrets, types.SecretReference{Name: secretRef})
 			}
 			ipsh.SecretArrayPath = "imagePullSecrets"
+			hints.ImagePullSecrets = append(hints.ImagePullSecrets, ipsh)
 		}
-		hints.ImagePullSecrets = append(hints.ImagePullSecrets, ipsh)
+		// Option 1b. It's an empty string array, which comes back as an interface array
+		if reflect.TypeOf(ipsEl) == reflect.TypeOf([]interface{}{}) {
+			fmt.Println("DEBUG: got array of interface{} for imagePullSecrets")
+			// Must be a blank imagePullSecrets
+			ipsh.SecretArrayPath = "imagePullSecrets"
+			hints.ImagePullSecrets = append(hints.ImagePullSecrets, ipsh)
+		}
+
+		// Option 2. It's a single secret name with an enabling flag
+		// Ensure type is map[string]interface{}{}, otherwise check for 'enabled' boolean and 'name'(which may not exist) - NiFiKop operator
+		if reflect.TypeOf(ipsEl) == reflect.TypeOf(map[string]interface{}{}) {
+			fmt.Println("DEBUG: got map[string]interface for imagePullSecrets")
+			ipsNonArray := ipsEl.(map[string]interface{})
+
+			nameEl := ipsNonArray["name"]
+			if nameEl != nil {
+				ipsh.PackagedSecrets = append(ipsh.PackagedSecrets, types.SecretReference{Name: nameEl.(string)})
+			}
+			ipsh.SecretNamePath = "imagePullSecrets.name"
+
+			enabledEl := ipsNonArray["enabled"]
+			if enabledEl != nil {
+				ipsh.EnabledFlagPath = "imagePullSecrets.enabled"
+			}
+
+			hints.ImagePullSecrets = append(hints.ImagePullSecrets, ipsh)
+		}
 	}
 
 	// Copy the Chart folder into a subfolder
@@ -247,7 +366,7 @@ func ProcessChartFolder(rootPackageFolder string, isRootPackage bool, chartFolde
 			os.Exit(1)
 		}
 		childResult := types.HelmChartProcessingResult{}
-		_, _, err = ProcessChartFolder(absPath, false, absSubPath, false, &childResult)
+		_, _, err = ProcessChartFolder(valuesFiles, absPath, false, absSubPath, false, &childResult)
 		if err != nil {
 			fmt.Println("Error processing helm subchart:", newDepNameAndVersion, "error:", err)
 			os.Exit(1)
@@ -323,11 +442,19 @@ func FlattenHintsToParent(rootHints *types.HintsFile, result *types.HelmChartPro
 
 func PopulateContainerList(containerList *types.ContainerImageList, helmResultTree *types.HelmChartProcessingResult) {
 	// Add our containers first
-	for _, ctr := range helmResultTree.Containers {
+	for cidx, ctr := range helmResultTree.Containers {
 		found := false
-		for _, img := range containerList.Containers {
-			found = found || (ctr.Registry == img.Registry) && (ctr.Repository == img.Repository) &&
+		for imgidx, img := range containerList.Containers {
+			justFound := (ctr.Registry == img.Registry) && (ctr.Repository == img.Repository) &&
 				((ctr.Tag != "" && ctr.Tag == img.Tag) || ( /* Implied: ctr.Tag == "" && */ ctr.Digest != "" && ctr.Digest == img.Digest))
+			found = found || justFound
+			if justFound && ctr.Registry == "" {
+				fmt.Println("WARNING: Found empty container registry reference. Defaulting to docker.io for repository:", ctr.Repository)
+				ctr.Registry = "docker.io"
+				img.Registry = "docker.io"
+				containerList.Containers[imgidx] = img
+				helmResultTree.Containers[cidx] = ctr
+			}
 		}
 		if !found {
 			containerList.Containers = append(containerList.Containers, ctr)
