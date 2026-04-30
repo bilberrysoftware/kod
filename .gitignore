@@ -42,3 +42,6 @@ go.work.sum
 
 # GoLand
 /.idea
+
+# Added by goreleaser init:
+dist/

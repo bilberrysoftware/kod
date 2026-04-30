@@ -6,6 +6,8 @@ theme:
   name: material
   favicon: images/favicon.png
   logo: images/logo.png
+  palette:
+    primary: deep purple
 #  icon:
 #    repo: ./docs/images/favicon.png
   features:
@@ -37,6 +39,9 @@ nav:
   - Developer's Guide:
       - devguide/index.md
       - Feature planning: devguide/planning.md
+      - Architecture: devguide/architecture.md
 
 plugins:
   - search
+
+copyright: Copyright &copy; 2026 kod Project Contributors
