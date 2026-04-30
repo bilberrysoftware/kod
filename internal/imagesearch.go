@@ -46,31 +46,59 @@ func FindContainerImagesByImageChildValues(chartDef types.HelmChart, parentPath 
 				hint.DigestPath = "digest"
 			}
 			if vImageRegistry == nil {
+				hint.RegistryPath = "repository./"
 				// Get Registry from the first part of repository if it looks like a URL, OR default to docker.io
 				idx := strings.Index(vImageRepositoryStr, "/")
 				if idx != -1 {
-					vImageRegistryStr = vImageRepositoryStr[:idx]
-					vImageRepositoryStr = vImageRepositoryStr[idx+1:]
-					hint.RegistryPath = "repository./"
-				} else {
-					// Ensure the first part is NOT an FQDN before we set to docker.io
 					strToCompare := vImageRepositoryStr[:idx]
-					fqdnRE := regexp.MustCompile("^[a-zA-Z0-9._-]+[a-zA-Z0-9]\\.[a-zA-Z0-9._-]+[a-zA-Z0-9]$")
+					fqdnRE := regexp.MustCompile("^[a-zA-Z0-9._-]+[a-zA-Z0-9](\\.[a-zA-Z0-9._-]+[a-zA-Z0-9])+$")
+					// Ensure the first part is NOT an FQDN before we set to docker.io
 					if fqdnRE.MatchString(strToCompare) {
+						// Arriving here means the registry tag does not exist, but the first part of repository is an FQDN
 						// Still a repository with a registry path in it
 						vImageRegistryStr = vImageRepositoryStr[:idx]
 						vImageRepositoryStr = vImageRepositoryStr[idx+1:]
-						hint.RegistryPath = "repository./"
 					} else {
-						// vImageRegistry isn't in repository either - so default to docker.io, and assume the override is in repository
+						// Arriving here means the registry tag does not exist, and the first part of repository is missing a registry FQDN
 						fmt.Println(" - WARNING: registry path is not specified, so setting to docker.io and assuming it's overridden in the repository tag path of:", vImageRepositoryStr)
 						vImageRegistryStr = "docker.io"
-						hint.RegistryPath = "repository./"
+						//vImageRegistryStr = vImageRepositoryStr[:idx]
+						//vImageRepositoryStr = vImageRepositoryStr[idx+1:]
+						//hint.RegistryPath = "repository./"
 					}
+				} else {
+					// Arriving here means that the registry tag does not exist, and the repository string doesn't include an FQDN
+					// vImageRegistry isn't in repository either - so default to docker.io, and assume the override is in repository
+					fmt.Println(" - WARNING: registry path is not specified, so setting to docker.io and assuming it's overridden in the repository tag path of:", vImageRepositoryStr)
+					vImageRegistryStr = "docker.io"
+					//hint.RegistryPath = "repository./"
 				}
 			} else {
 				vImageRegistryStr = strings.TrimSpace(vImageRegistry.(string))
 				hint.RegistryPath = "registry"
+				// It's possible to have a blank registry but have the registry in the repository flag (See prometheus/pushgateway)
+				if "" == vImageRegistryStr {
+					idx := strings.Index(vImageRepositoryStr, "/")
+					if idx != -1 {
+						// Ensure the first part is NOT an FQDN before we set to docker.io
+						strToCompare := vImageRepositoryStr[:idx]
+						fqdnRE := regexp.MustCompile("^[a-zA-Z0-9._-]+[a-zA-Z0-9](\\.[a-zA-Z0-9._-]+[a-zA-Z0-9])+$")
+						if fqdnRE.MatchString(strToCompare) {
+							// Still a repository with a registry path in it
+							vImageRegistryStr = vImageRepositoryStr[:idx]
+							vImageRepositoryStr = vImageRepositoryStr[idx+1:]
+							//hint.RegistryPath = "repository./"
+							hint.PackagedImage.Registry = vImageRegistryStr
+							hint.PackagedImage.Repository = vImageRepositoryStr
+						} else {
+							// vImageRegistry isn't in repository either - so default to docker.io, and assume the override is in repository
+							fmt.Println(" - WARNING: registry path is not specified, so setting to docker.io and assuming it's overridden in the repository tag path of:", vImageRepositoryStr)
+							vImageRegistryStr = "docker.io"
+							hint.PackagedImage.Registry = "docker.io"
+							//hint.RegistryPath = "repository./"
+						}
+					}
+				}
 			}
 			vImageTag := vImage["tag"] // TODO change this to be more dynamic in future versions
 			vImageTagStr := ""

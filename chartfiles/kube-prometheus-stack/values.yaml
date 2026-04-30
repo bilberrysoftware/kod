@@ -1,0 +1,14 @@
+# Not having the below causes issues on most secure systems where root mounts are not permitted
+# See: https://github.com/prometheus-community/helm-charts/issues/467#issuecomment-1345563363
+# And: https://github.com/canonical/microk8s/issues/4783
+# Note that we test kod on Ubuntu WSL with Microk8s in strict mode by default
+prometheus-node-exporter:
+  hostRootFsMount:
+    enabled: false
+
+# If you see crash loop backoffs and the below messages in grafana contianer logs, try the below:-
+# logger=dashboard-service t=2026-04-30T11:22:08.689503613Z level=info msg="No last resource version found, starting from scratch" orgID=1
+grafana:
+  persistence:
+    enabled: true
+    chown: true

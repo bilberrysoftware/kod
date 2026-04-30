@@ -305,7 +305,7 @@ Examples:
 					if !needsFqdn {
 						strToCompare := ctr.Repository[:slashIdx]
 						//var fqdnRE = regexp.MustCompile("(?=^.{4,253}$)(^((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\\.)+[a-zA-Z]{2,63}$)") // FAILS TO COMPILE IN GOLANG REGEXP
-						var fqdnRE = regexp.MustCompile("^[a-zA-Z0-9._-]+[a-zA-Z0-9]\\.[a-zA-Z0-9._-]+[a-zA-Z0-9]$")
+						var fqdnRE = regexp.MustCompile("^[a-zA-Z0-9._-]+[a-zA-Z0-9](\\.[a-zA-Z0-9._-]+[a-zA-Z0-9])+$")
 						needsFqdn = !fqdnRE.MatchString(strToCompare)
 						fmt.Println(fmt.Sprintf("DEBUG: strToCompare: '%s' matched? %t", strToCompare, needsFqdn))
 					}
