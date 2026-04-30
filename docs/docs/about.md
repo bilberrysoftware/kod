@@ -8,8 +8,9 @@ it operates. It does not hamper the deployer at all by restricting namespaces, c
 other aspect of a deployment. It does not install any additional webhooks or CRD into the target Kubernetes cluster.
 All commands executed are outputted to the console, so you can choose to execute them yourself in future.
 
-kod prefers the OCI container images and artifact format, but does support the legacy dockerv2 format.
-`skopeo` is used for moving container images.
+kod will prefer the OCI container images and artifact format, but does support the legacy dockerv2 format but will
+use whatever format it finds in the source URL.
+`reglclient` is used for OCI registry interactions, and `skopeo` is used for dockerv2 registry interactions.
 
 ## Motivation
 
@@ -41,7 +42,9 @@ It's all good fun.
 ![Kod Logo](images/logo.png)
 
 This is why the logo for 'kod' is, in fact, a Haddock. 8o) It's a laugh, innit? Up the Iron! Oh and go order some
-Haddock from the fish and chip shop, not Cod, as Grimsby Haddock is much better.
+Haddock from the fish and chip shop, not Cod, as Grimsby Haddock is much better. 
+[Haddock is also more sustainable than Cod](https://www.mcsuk.org/goodfishguide/species/haddock/) for British sourced fish.
+(Although I've not eaten fish in 5 years since watching [Seaspiracy](https://www.seaspiracy.org/) - Content Warning on that film).
 
 ## Technical approach
 
@@ -51,7 +54,7 @@ A few key principles are at play in kod:-
 - Handle any complexity as much as we can in the kod command itself
 - Allow overrides in a helm-friendly way where we need to customise behaviour to a package (E.g. when they use weird value names for container registry, repository, tag and digest)
 - Wrap other tools that do jobs well rather than create our own (E.g. skopeo, helm, helmfile, and the zot container registry)
-- Target the OCI container image format and artifact format and protocols as much as possible
+- Target the OCI container image format and artifact format and protocols as much as possible (COMING SOON IN v0.6.0)
 - Ensure packages are self-describing, requiring no external information to 'just work'
 - Don't assume our container image sources are always public - allows a helm values override on packaging to target a local container registry (E.g. to fetch pre-scanned, authorised container images)
 
@@ -68,24 +71,21 @@ Any helm chart that uses common names for container image values in the values f
 defaults to image.repository and image.tag as a minimum, but could also split the registry out into image.registry,
 and may also specify a specific container image SHA256 hash in an image.digest property.
 
-- bitnami/mongodb (Has to fetch 'latest' version, as tag in the values file doesn't exist!)
-- bitnami/postgresql (Has to fetch 'latest' version, as tag in the values file doesn't exist!)
-- bitnami/redis (Has to fetch 'latest' version, as tag in the values file doesn't exist!)
-- cloudnative-pg/cloudnative-pg (defaults to 'Chart.appVersion' version)
-- NiFi kop Operator
+See the [Validated Charts page](./reference/validated.md) for a comprehensive list.
 
 Other automated mechanisms for finding container image references will be added over time. You will
 be able to override this in future for troublesome packages using a kod-hints.yaml file.
 
 The kod project will try and ensure that at least the top ten monthly viewed charts on artifacts hub always
-work OOTB. See https://artifacthub.io/stats (top right) for that list. We will also provide a mechanism and
+work OOTB. See [https://artifacthub.io/stats](https://artifacthub.io/stats) 
+(top right) for that list. We will also provide a mechanism and
 how-to for getting any helm chart working with kod using the hints file.
 
 ## Tools we use
 
 Rather than re-invent the wheel, we use and support a number of other opensource tools:-
 
-- [`skopeo`](https://github.com/containers/skopeo) for downloading and uploading container images
+- [`skopeo`](https://github.com/containers/skopeo) for downloading and uploading container images via the docker v2 protocol
 - [`helm`](https://helm.sh/) for templating, packaging, and deploying the helm charts
 - [`helmfile`](https://helmfile.readthedocs.io/en/latest/) (Soon!) for sequencing the installations of multiple helm charts across namespaces
 - [`zot`](https://zotregistry.dev/) container and artifact registry as our target OCI registry for testing and validating kod. Other container registries are supported though

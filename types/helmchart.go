@@ -23,3 +23,18 @@ type HelmChart struct {
 	AppVersion   string                `yaml:"appVersion"`
 	Dependencies []HelmChartDependency `yaml:"dependencies"`
 }
+
+/*
+ * A single result from helm search repo -oyaml. See HelmSearchResults.
+ */
+type HelmSearchResult struct {
+	Name        string `yaml:"name"`
+	Version     string `yaml:"version"`
+	AppVersion  string `yaml:"app_version"`
+	Description string `yaml:"description"`
+}
+
+/*
+ * The output of the helm search repo -oyaml command
+ */
+type HelmSearchResults []HelmSearchResult

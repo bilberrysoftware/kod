@@ -6,27 +6,30 @@ This tutorial shows you how to package the Bitnami CloudNative Postgres chart fo
 
 - A Linux or Mac to run kod on
 - For all operations:-
-  - You have [Installed kod](install.md)
-  - You have [skopeo installed](https://github.com/containers/skopeo/blob/main/install.md)
-  - You have [helm installed](https://helm.sh/docs/intro/install/)
+    - You have [Installed kod](install.md)
+    - You have [skopeo installed](https://github.com/containers/skopeo/blob/main/install.md)
+    - You have [helm installed](https://helm.sh/docs/intro/install/)
 - For building the package via `kod package`:-
-  - Public internet connection so you can reach the helm chart and container images; OR
-  - The internal private repository helm chart URL or cloned chart folder, and a private copy of the container images, with their location specified via a helm values file.
+    - Public internet connection so you can reach the helm chart and container images; OR
+    - The internal private repository helm chart URL or cloned chart folder, and a private copy of the container images, with their location specified via a helm values file.
 - For deploying the package via `kod deploy`:-
-  - Private container repository setup for HTTPS use, with you logged into skopeo
-  - Private Kubernetes cluster setup and logged in with a working kubeconfig file (~/.kube/config or KUBECONFIG set)
+    - Private container repository setup for HTTPS use, with you logged into skopeo
+    - Private Kubernetes cluster setup and logged in with a working kubeconfig file (~/.kube/config or KUBECONFIG set)
 
 ## Creating a package from a single helm chart
 
 Now let's quickly package the Bitnami CloudNative Postgres chart and move this to a private registry.
 
 ```shell
-git clone https://github.com/bitnami/charts.git
-kod package -c ../other-charts/cloudnative-pg
+wget https://github.com/cloudnative-pg/charts/releases/download/cloudnative-pg-v0.28.0/cloudnative-pg-0.28.0.tgz
+tar xzf cloudnative-pg-0.28.0.tgz
+kod package -c ./cloudnative-pg
 ```
 
-Note: Online fetching of Helm charts from `oci://` URLs, or local `helm pull` `.tgz` files, or Artifactory URLs 
-will be supported in future too.
+Note: The https fetching of a helm chart is currently under development
+
+Note: Online fetching of Helm charts from `oci://` URLs, or `https://something/chart.tgz` HTTPS URLs
+have been supported since v0.2.0.
 
 ## Copy the package to the target environment
 
@@ -40,31 +43,6 @@ kod unpack -p /tmp/kod-cloudnative-pg-VERSION.kodpkg
 
 In our testing we used version 0.28.0.
 
-## Pre-deploy preparation - ensure you have a default private registry secret
-
-You need to instruct your service account to use the appropriate default container registry credentials. This can easily be done by doing the following:-
-
-Below we use the local alias myregistry.local for a container registry - you may need to use the hostname to ensure it matches its TLS certificate.
-
-```shell
-docker login myregistry.local:8080
-kubectl create secret docker-registry zot --from-file=~/.docker/config.json
-kubectl patch serviceaccount default -p '{"imagePullSecrets": [{"name": "zot"}]}'
-```
-
-Note that the above are created in the default namespace.
-
-Note also that you may have to set this AFTER deployment on the Service Accounts that are deployed by your helm chart.
-Below is the example needed for cloudnative-pg:-
-
-```shell
-kubectl patch serviceaccount mycnpg-cloudnative-pg -p '{"imagePullSecrets": [{"name": "zot"}]}'
-kubectl get all
-kubectl rollout restart deployment.apps/mycnpg-cloudnative-pg
-```
-
-Note: In future we may add support for creating a registry secret, if one doesn't exist, and patching in the common imagePullSecrets helm values file property too.
-
 ## Deploying the package with helm
 
 Now install the package. This copies the containers to your container registry, and the helm chart to your
@@ -72,11 +50,13 @@ OCI Artifact repository (if available), before performing a `helm upgrade --inst
 any additional deployment specific values files that you have:-
 
 ```shell
-kod deploy -p /tmp/kod-cloudnative-pg-0.28.0.kodpkg -r https://myregistry.local:8080/ -d mycnpg
+kod deploy -p /tmp/kod-cloudnative-pg-0.28.0.kodpkg -n mynamespace -r https://myregistry.local:8080/ -d mycnpg -s myregcred --create-secret
 ```
 
 Where the -r URL is your local container registry in your target environment, and kubectl (and thus helm)
 has a valid kubeconfig file set and your are logged into the target cluster and the target registry.
+
+Note that the above will create the namespace and registry credential for you (based on your skopeo login status). You can modify this command if your regcred already exists.
 
 Your pod will successfully start now against your internal container registry. To prove this:-
 
